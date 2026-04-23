@@ -15,10 +15,13 @@ import {
 } from '@/components/ui/sheet'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { toast } from 'sonner'
+import Link from 'next/link'
 import {
   ShoppingCart, Search, MapPin, Home, ArrowLeft, Plus, Minus, Trash2, ChefHat,
   Utensils, Bike, Check, Clock, CreditCard, Banknote, QrCode, MessageCircle,
+  User, LogIn, LogOut, LayoutDashboard, Eye,
 } from 'lucide-react'
+import { getUser, getToken, clearAuth, authHeaders } from '@/lib/auth'
 
 const brl = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
@@ -45,6 +48,16 @@ function App() {
   const [submitting, setSubmitting] = useState(false)
   const [completedOrder, setCompletedOrder] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [authUser, setAuthUser] = useState(null)
+  const [recentOrders, setRecentOrders] = useState([])
+
+  useEffect(() => {
+    setAuthUser(getUser())
+    try {
+      const saved = JSON.parse(localStorage.getItem('sabor_recent_orders') || '[]')
+      setRecentOrders(saved)
+    } catch {}
+  }, [])
 
   useEffect(() => {
     const load = async () => {
@@ -143,12 +156,16 @@ function App() {
       }
       const res = await fetch('/api/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(payload),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro ao enviar pedido')
       setCompletedOrder(data)
+      // Save to recent orders
+      const recent = [{ id: data.id, type: data.type, total: data.total, createdAt: data.createdAt }, ...recentOrders].slice(0, 5)
+      localStorage.setItem('sabor_recent_orders', JSON.stringify(recent))
+      setRecentOrders(recent)
       setCart([])
       setView('success')
       setCheckoutStep('info')
@@ -178,6 +195,30 @@ function App() {
       <main className="relative min-h-screen overflow-hidden bg-gradient-to-br from-zinc-950 via-stone-950 to-black text-foreground">
         <div className="pointer-events-none absolute -top-32 -left-32 h-96 w-96 rounded-full bg-amber-500/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-orange-500/10 blur-3xl" />
+
+        {/* Top-right user menu */}
+        <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
+          {authUser ? (
+            <>
+              {authUser.role === 'admin' && (
+                <Link href="/admin">
+                  <Button variant="outline" size="sm" className="border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">
+                    <LayoutDashboard className="mr-1 h-4 w-4" /> Admin
+                  </Button>
+                </Link>
+              )}
+              <Button variant="outline" size="sm" className="border-white/10 bg-white/5" onClick={() => { clearAuth(); setAuthUser(null); toast.success('Desconectado') }}>
+                <LogOut className="mr-1 h-4 w-4" /> {authUser.name?.split(' ')[0] || 'Sair'}
+              </Button>
+            </>
+          ) : (
+            <Link href="/login">
+              <Button variant="outline" size="sm" className="border-white/10 bg-white/5">
+                <LogIn className="mr-1 h-4 w-4" /> Entrar
+              </Button>
+            </Link>
+          )}
+        </div>
 
         <div className="relative mx-auto flex min-h-screen max-w-5xl flex-col items-center justify-center px-6 py-12">
           <div className="mb-10 flex items-center gap-3">
@@ -232,8 +273,31 @@ function App() {
           </div>
 
           <p className="mt-12 text-xs text-muted-foreground">
-            Você pode continuar como visitante — login opcional em breve.
+            Você pode continuar como visitante — faça login para acompanhar seus pedidos.
           </p>
+
+          {recentOrders.length > 0 && (
+            <div className="mt-8 w-full max-w-3xl">
+              <div className="mb-3 text-xs uppercase tracking-widest text-muted-foreground">Seus pedidos recentes</div>
+              <div className="space-y-2">
+                {recentOrders.slice(0, 3).map((o) => (
+                  <Link key={o.id} href={`/pedido/${o.id}`} className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 p-3 hover:border-amber-500/30 hover:bg-white/10">
+                    <div className="flex items-center gap-3">
+                      {o.type === 'local' ? <Utensils className="h-4 w-4 text-amber-400" /> : <Bike className="h-4 w-4 text-orange-400" />}
+                      <div>
+                        <div className="font-mono text-sm font-semibold">#{o.id.slice(0, 8).toUpperCase()}</div>
+                        <div className="text-xs text-muted-foreground">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-amber-400">{brl(o.total)}</span>
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </main>
     )
@@ -307,13 +371,11 @@ function App() {
                 <Button onClick={resetAll} className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 hover:opacity-90">
                   <Home className="mr-2 h-4 w-4" /> Voltar ao início
                 </Button>
-                <Button
-                  variant="outline"
-                  className="flex-1 border-white/20"
-                  onClick={() => window.open(`https://wa.me/?text=Acabei de fazer um pedido no Sabor %26 Arte! Pedido %23${completedOrder.id.slice(0, 8).toUpperCase()}`, '_blank')}
-                >
-                  <MessageCircle className="mr-2 h-4 w-4" /> Compartilhar
-                </Button>
+                <Link href={`/pedido/${completedOrder.id}`} className="flex-1">
+                  <Button variant="outline" className="w-full border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">
+                    <Eye className="mr-2 h-4 w-4" /> Acompanhar pedido
+                  </Button>
+                </Link>
               </div>
             </CardContent>
           </Card>
