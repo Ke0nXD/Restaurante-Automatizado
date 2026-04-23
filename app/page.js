@@ -1,0 +1,795 @@
+'use client'
+
+import { useState, useEffect, useMemo } from 'react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog'
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetFooter,
+} from '@/components/ui/sheet'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { toast } from 'sonner'
+import {
+  ShoppingCart, Search, MapPin, Home, ArrowLeft, Plus, Minus, Trash2, ChefHat,
+  Utensils, Bike, Check, Clock, CreditCard, Banknote, QrCode, MessageCircle,
+} from 'lucide-react'
+
+const brl = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+function App() {
+  const [view, setView] = useState('welcome')
+  const [orderType, setOrderType] = useState(null)
+  const [products, setProducts] = useState([])
+  const [categories, setCategories] = useState([])
+  const [activeCategory, setActiveCategory] = useState('all')
+  const [search, setSearch] = useState('')
+  const [cart, setCart] = useState([])
+  const [cartOpen, setCartOpen] = useState(false)
+  const [detailProduct, setDetailProduct] = useState(null)
+  const [detailQty, setDetailQty] = useState(1)
+  const [detailObs, setDetailObs] = useState('')
+  const [checkoutStep, setCheckoutStep] = useState('info')
+  const [tableNumber, setTableNumber] = useState('')
+  const [customer, setCustomer] = useState({ name: '', phone: '' })
+  const [address, setAddress] = useState({
+    cep: '', street: '', number: '', district: '', complement: '',
+    reference: '', city: '', state: '',
+  })
+  const [paymentMethod, setPaymentMethod] = useState('Pix')
+  const [submitting, setSubmitting] = useState(false)
+  const [completedOrder, setCompletedOrder] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [pRes, cRes] = await Promise.all([
+          fetch('/api/products'),
+          fetch('/api/categories'),
+        ])
+        setProducts(await pRes.json())
+        setCategories(await cRes.json())
+      } catch (e) {
+        toast.error('Erro ao carregar cardápio')
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
+  }, [])
+
+  useEffect(() => {
+    const saved = localStorage.getItem('sabor_cart')
+    if (saved) { try { setCart(JSON.parse(saved)) } catch {} }
+  }, [])
+  useEffect(() => {
+    localStorage.setItem('sabor_cart', JSON.stringify(cart))
+  }, [cart])
+
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) => {
+      const matchCat = activeCategory === 'all' || p.categoryId === activeCategory
+      const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase())
+      return matchCat && matchSearch
+    })
+  }, [products, activeCategory, search])
+
+  const cartCount = cart.reduce((s, i) => s + i.quantity, 0)
+  const cartTotal = cart.reduce((s, i) => s + i.price * i.quantity, 0)
+
+  const addToCart = (product, quantity = 1, observations = '') => {
+    setCart((prev) => {
+      const existing = prev.find(
+        (i) => i.productId === product.id && i.observations === observations
+      )
+      if (existing) {
+        return prev.map((i) =>
+          i === existing ? { ...i, quantity: i.quantity + quantity } : i
+        )
+      }
+      return [
+        ...prev,
+        {
+          productId: product.id,
+          name: product.name,
+          price: product.price,
+          image: product.image,
+          quantity,
+          observations,
+        },
+      ]
+    })
+    toast.success(`${product.name} adicionado ao carrinho`)
+  }
+
+  const updateQty = (idx, delta) => {
+    setCart((prev) =>
+      prev
+        .map((i, k) => (k === idx ? { ...i, quantity: Math.max(0, i.quantity + delta) } : i))
+        .filter((i) => i.quantity > 0)
+    )
+  }
+  const removeItem = (idx) => {
+    setCart((prev) => prev.filter((_, k) => k !== idx))
+  }
+
+  const openDetail = (p) => {
+    setDetailProduct(p); setDetailQty(1); setDetailObs('')
+  }
+
+  const submitOrder = async () => {
+    setSubmitting(true)
+    try {
+      const payload = {
+        type: orderType,
+        items: cart.map((i) => ({
+          productId: i.productId,
+          quantity: i.quantity,
+          observations: i.observations,
+        })),
+        customer: { name: customer.name || 'Visitante', phone: customer.phone || '' },
+      }
+      if (orderType === 'local') {
+        payload.table = tableNumber
+      } else {
+        payload.address = address
+        payload.payment = { method: paymentMethod }
+      }
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao enviar pedido')
+      setCompletedOrder(data)
+      setCart([])
+      setView('success')
+      setCheckoutStep('info')
+      toast.success('Pedido enviado com sucesso!')
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const resetAll = () => {
+    setView('welcome')
+    setOrderType(null)
+    setCart([])
+    setCompletedOrder(null)
+    setTableNumber('')
+    setAddress({ cep: '', street: '', number: '', district: '', complement: '', reference: '', city: '', state: '' })
+    setCustomer({ name: '', phone: '' })
+    setCheckoutStep('info')
+    setActiveCategory('all')
+    setSearch('')
+  }
+
+  if (view === 'welcome') {
+    return (
+      <main className="relative min-h-screen overflow-hidden bg-gradient-to-br from-zinc-950 via-stone-950 to-black text-foreground">
+        <div className="pointer-events-none absolute -top-32 -left-32 h-96 w-96 rounded-full bg-amber-500/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-orange-500/10 blur-3xl" />
+
+        <div className="relative mx-auto flex min-h-screen max-w-5xl flex-col items-center justify-center px-6 py-12">
+          <div className="mb-10 flex items-center gap-3">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-lg shadow-amber-500/30">
+              <ChefHat className="h-7 w-7 text-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">Sabor & Arte</h1>
+              <p className="text-xs uppercase tracking-[0.25em] text-amber-400/80">gastronomia autoral</p>
+            </div>
+          </div>
+
+          <h2 className="mb-3 text-center text-4xl font-bold tracking-tight sm:text-5xl">
+            Bem-vindo ao nosso <span className="bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">cardápio digital</span>
+          </h2>
+          <p className="mb-12 max-w-xl text-center text-lg text-muted-foreground">
+            Como você gostaria de ser atendido hoje? Escolha uma opção para começar.
+          </p>
+
+          <div className="grid w-full max-w-3xl gap-6 sm:grid-cols-2">
+            <button
+              onClick={() => { setOrderType('local'); setView('menu') }}
+              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-zinc-900 to-zinc-950 p-8 text-left transition hover:border-amber-500/40 hover:shadow-2xl hover:shadow-amber-500/10"
+            >
+              <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-400 transition group-hover:scale-110 group-hover:bg-amber-500/20">
+                <Utensils className="h-8 w-8" />
+              </div>
+              <h3 className="mb-2 text-2xl font-bold">Estou no Local</h3>
+              <p className="text-sm text-muted-foreground">
+                Peça pela mesa. Sua comanda será aberta automaticamente e enviada à cozinha.
+              </p>
+              <div className="mt-6 inline-flex items-center text-sm font-medium text-amber-400 transition group-hover:translate-x-1">
+                Começar pedido →
+              </div>
+            </button>
+
+            <button
+              onClick={() => { setOrderType('delivery'); setView('menu') }}
+              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-zinc-900 to-zinc-950 p-8 text-left transition hover:border-orange-500/40 hover:shadow-2xl hover:shadow-orange-500/10"
+            >
+              <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-orange-500/10 text-orange-400 transition group-hover:scale-110 group-hover:bg-orange-500/20">
+                <Bike className="h-8 w-8" />
+              </div>
+              <h3 className="mb-2 text-2xl font-bold">Fazer pedido Delivery</h3>
+              <p className="text-sm text-muted-foreground">
+                Receba em casa. Informe seu endereço e forma de pagamento no checkout.
+              </p>
+              <div className="mt-6 inline-flex items-center text-sm font-medium text-orange-400 transition group-hover:translate-x-1">
+                Começar pedido →
+              </div>
+            </button>
+          </div>
+
+          <p className="mt-12 text-xs text-muted-foreground">
+            Você pode continuar como visitante — login opcional em breve.
+          </p>
+        </div>
+      </main>
+    )
+  }
+
+  if (view === 'success' && completedOrder) {
+    const isLocal = completedOrder.type === 'local'
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-zinc-950 to-black px-4 py-10">
+        <div className="mx-auto max-w-2xl">
+          <Card className="border-white/10 bg-zinc-900/60 backdrop-blur">
+            <CardContent className="p-8">
+              <div className="mb-6 flex flex-col items-center text-center">
+                <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-green-600 shadow-lg shadow-emerald-500/30">
+                  <Check className="h-10 w-10 text-white" />
+                </div>
+                <h2 className="text-3xl font-bold">Pedido confirmado!</h2>
+                <p className="mt-2 text-muted-foreground">
+                  {isLocal
+                    ? `Sua comanda foi aberta na mesa ${completedOrder.table}.`
+                    : 'Seu pedido foi enviado ao restaurante.'}
+                </p>
+              </div>
+
+              <div className="mb-6 rounded-xl border border-white/10 bg-black/30 p-4">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Número do pedido</span>
+                  <span className="font-mono font-semibold">#{completedOrder.id.slice(0, 8).toUpperCase()}</span>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Status</span>
+                  <Badge variant="secondary" className="bg-amber-500/20 text-amber-300">
+                    <Clock className="mr-1 h-3 w-3" /> {completedOrder.status}
+                  </Badge>
+                </div>
+                {isLocal ? (
+                  <div className="mt-2 flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Mesa</span>
+                    <span className="font-semibold">{completedOrder.table}</span>
+                  </div>
+                ) : (
+                  <div className="mt-2 flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Pagamento</span>
+                    <span className="font-semibold">{completedOrder.payment?.method}</span>
+                  </div>
+                )}
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Total</span>
+                  <span className="text-lg font-bold text-amber-400">{brl(completedOrder.total)}</span>
+                </div>
+              </div>
+
+              <div className="mb-6">
+                <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Itens</h3>
+                <div className="space-y-2">
+                  {completedOrder.items.map((i, k) => (
+                    <div key={k} className="flex items-start justify-between gap-4 text-sm">
+                      <div>
+                        <div className="font-medium">{i.quantity}× {i.name}</div>
+                        {i.observations && (
+                          <div className="text-xs text-muted-foreground">Obs: {i.observations}</div>
+                        )}
+                      </div>
+                      <div className="whitespace-nowrap">{brl(i.subtotal)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button onClick={resetAll} className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 hover:opacity-90">
+                  <Home className="mr-2 h-4 w-4" /> Voltar ao início
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 border-white/20"
+                  onClick={() => window.open(`https://wa.me/?text=Acabei de fazer um pedido no Sabor %26 Arte! Pedido %23${completedOrder.id.slice(0, 8).toUpperCase()}`, '_blank')}
+                >
+                  <MessageCircle className="mr-2 h-4 w-4" /> Compartilhar
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    )
+  }
+
+  return (
+    <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-black to-zinc-950 pb-24">
+      <header className="sticky top-0 z-30 border-b border-white/5 bg-black/70 backdrop-blur-lg">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
+          <button onClick={() => setView('welcome')} className="flex items-center gap-2 text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600">
+              <ChefHat className="h-5 w-5 text-white" />
+            </div>
+            <div className="leading-tight">
+              <div className="text-sm font-bold">Sabor & Arte</div>
+              <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-amber-400">
+                {orderType === 'local' ? <><Utensils className="h-2.5 w-2.5" /> No Local</> : <><Bike className="h-2.5 w-2.5" /> Delivery</>}
+              </div>
+            </div>
+          </div>
+          <Sheet open={cartOpen} onOpenChange={setCartOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="sm" className="relative border-white/10 bg-white/5 hover:bg-white/10">
+                <ShoppingCart className="h-4 w-4" />
+                {cartCount > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-black">
+                    {cartCount}
+                  </span>
+                )}
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="flex w-full flex-col border-white/10 bg-zinc-950 sm:max-w-lg">
+              <SheetHeader>
+                <SheetTitle className="text-2xl">Seu pedido</SheetTitle>
+              </SheetHeader>
+              {cart.length === 0 ? (
+                <div className="flex flex-1 flex-col items-center justify-center text-center">
+                  <ShoppingCart className="mb-4 h-16 w-16 text-muted-foreground/40" />
+                  <p className="text-muted-foreground">Carrinho vazio</p>
+                  <p className="mt-1 text-sm text-muted-foreground/70">Adicione itens do cardápio para começar.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex-1 space-y-3 overflow-y-auto py-4">
+                    {cart.map((item, idx) => (
+                      <div key={idx} className="flex gap-3 rounded-xl border border-white/5 bg-white/5 p-3">
+                        <img src={item.image} alt={item.name} className="h-16 w-16 shrink-0 rounded-lg object-cover" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="font-medium leading-tight">{item.name}</div>
+                            <button onClick={() => removeItem(idx)} className="text-muted-foreground hover:text-red-400">
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                          {item.observations && (
+                            <div className="mt-0.5 text-xs italic text-muted-foreground">
+                              &ldquo;{item.observations}&rdquo;
+                            </div>
+                          )}
+                          <div className="mt-2 flex items-center justify-between">
+                            <div className="flex items-center gap-2 rounded-full bg-black/40 p-1">
+                              <button onClick={() => updateQty(idx, -1)} className="flex h-6 w-6 items-center justify-center rounded-full hover:bg-white/10">
+                                <Minus className="h-3 w-3" />
+                              </button>
+                              <span className="min-w-4 text-center text-sm font-semibold">{item.quantity}</span>
+                              <button onClick={() => updateQty(idx, 1)} className="flex h-6 w-6 items-center justify-center rounded-full hover:bg-white/10">
+                                <Plus className="h-3 w-3" />
+                              </button>
+                            </div>
+                            <div className="font-semibold text-amber-400">{brl(item.price * item.quantity)}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <SheetFooter className="border-t border-white/5 pt-4">
+                    <div className="w-full space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Subtotal</span>
+                        <span className="font-semibold">{brl(cartTotal)}</span>
+                      </div>
+                      <div className="flex items-center justify-between border-t border-white/5 pt-3">
+                        <span className="text-lg font-bold">Total</span>
+                        <span className="text-2xl font-bold text-amber-400">{brl(cartTotal)}</span>
+                      </div>
+                      <Button
+                        onClick={() => { setCartOpen(false); setView('checkout') }}
+                        size="lg"
+                        className="w-full bg-gradient-to-r from-amber-500 to-orange-600 text-base font-semibold hover:opacity-90"
+                      >
+                        Finalizar pedido →
+                      </Button>
+                    </div>
+                  </SheetFooter>
+                </>
+              )}
+            </SheetContent>
+          </Sheet>
+        </div>
+
+        {view === 'menu' && (
+          <div className="mx-auto max-w-6xl space-y-3 px-4 pb-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar no cardápio..."
+                className="border-white/10 bg-white/5 pl-9"
+              />
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              <CategoryChip active={activeCategory === 'all'} onClick={() => setActiveCategory('all')}>
+                Todos
+              </CategoryChip>
+              {categories.map((c) => (
+                <CategoryChip
+                  key={c.id}
+                  active={activeCategory === c.id}
+                  onClick={() => setActiveCategory(c.id)}
+                >
+                  <span className="mr-1">{c.icon}</span> {c.name}
+                </CategoryChip>
+              ))}
+            </div>
+          </div>
+        )}
+      </header>
+
+      {view === 'checkout' ? (
+        <CheckoutView
+          orderType={orderType}
+          checkoutStep={checkoutStep}
+          setCheckoutStep={setCheckoutStep}
+          tableNumber={tableNumber}
+          setTableNumber={setTableNumber}
+          customer={customer}
+          setCustomer={setCustomer}
+          address={address}
+          setAddress={setAddress}
+          paymentMethod={paymentMethod}
+          setPaymentMethod={setPaymentMethod}
+          cart={cart}
+          cartTotal={cartTotal}
+          submitting={submitting}
+          onSubmit={submitOrder}
+          onBack={() => setView('menu')}
+        />
+      ) : (
+        <div className="mx-auto max-w-6xl px-4 pt-6">
+          {loading ? (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="h-64 animate-pulse rounded-2xl bg-white/5" />
+              ))}
+            </div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <Search className="mb-4 h-12 w-12 text-muted-foreground/40" />
+              <p className="text-muted-foreground">Nenhum produto encontrado</p>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredProducts.map((p) => (
+                <ProductCard key={p.id} product={p} onOpen={() => openDetail(p)} onAdd={() => addToCart(p, 1, '')} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {cart.length > 0 && view === 'menu' && (
+        <button
+          onClick={() => setCartOpen(true)}
+          className="fixed bottom-5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-gradient-to-r from-amber-500 to-orange-600 px-5 py-3 text-sm font-semibold text-black shadow-2xl shadow-amber-500/30 transition hover:scale-105"
+        >
+          <ShoppingCart className="h-4 w-4" />
+          Ver carrinho ({cartCount})
+          <span className="h-4 w-px bg-black/30" />
+          {brl(cartTotal)}
+        </button>
+      )}
+
+      <Dialog open={!!detailProduct} onOpenChange={(o) => !o && setDetailProduct(null)}>
+        <DialogContent className="max-w-md overflow-hidden border-white/10 bg-zinc-950 p-0">
+          {detailProduct && (
+            <>
+              <img src={detailProduct.image} alt={detailProduct.name} className="h-56 w-full object-cover" />
+              <div className="p-6">
+                <DialogHeader>
+                  <DialogTitle className="text-2xl">{detailProduct.name}</DialogTitle>
+                  <DialogDescription className="text-base text-muted-foreground">
+                    {detailProduct.description}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="mt-4">
+                  <div className="mb-3 text-2xl font-bold text-amber-400">{brl(detailProduct.price)}</div>
+                  <Label className="mb-1 block text-sm">Observações (opcional)</Label>
+                  <Textarea
+                    placeholder="Ex.: sem cebola, ponto da carne mal passado..."
+                    value={detailObs}
+                    onChange={(e) => setDetailObs(e.target.value)}
+                    className="min-h-16 resize-none border-white/10 bg-white/5"
+                  />
+                </div>
+                <DialogFooter className="mt-4 flex-row items-center gap-3 sm:justify-between">
+                  <div className="flex items-center gap-2 rounded-full bg-white/5 p-1">
+                    <button onClick={() => setDetailQty(Math.max(1, detailQty - 1))} className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/10">
+                      <Minus className="h-4 w-4" />
+                    </button>
+                    <span className="min-w-6 text-center font-semibold">{detailQty}</span>
+                    <button onClick={() => setDetailQty(detailQty + 1)} className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/10">
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <Button
+                    onClick={() => { addToCart(detailProduct, detailQty, detailObs); setDetailProduct(null) }}
+                    className="bg-gradient-to-r from-amber-500 to-orange-600 hover:opacity-90"
+                  >
+                    Adicionar {brl(detailProduct.price * detailQty)}
+                  </Button>
+                </DialogFooter>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </main>
+  )
+}
+
+function CategoryChip({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`shrink-0 whitespace-nowrap rounded-full border px-4 py-1.5 text-sm font-medium transition ${
+        active
+          ? 'border-amber-500 bg-amber-500/10 text-amber-400'
+          : 'border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:text-foreground'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+function ProductCard({ product, onOpen, onAdd }) {
+  return (
+    <Card className="group overflow-hidden border-white/5 bg-zinc-900/50 transition hover:border-amber-500/30 hover:shadow-xl hover:shadow-amber-500/5">
+      <button onClick={onOpen} className="block w-full text-left">
+        <div className="relative h-48 overflow-hidden">
+          <img
+            src={product.image}
+            alt={product.name}
+            className="h-full w-full object-cover transition duration-500 group-hover:scale-110"
+          />
+          <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent" />
+        </div>
+      </button>
+      <CardContent className="p-4">
+        <button onClick={onOpen} className="block w-full text-left">
+          <h3 className="font-semibold leading-tight">{product.name}</h3>
+          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{product.description}</p>
+        </button>
+        <div className="mt-3 flex items-center justify-between">
+          <span className="text-lg font-bold text-amber-400">{brl(product.price)}</span>
+          <Button
+            size="sm"
+            onClick={onAdd}
+            className="bg-gradient-to-r from-amber-500 to-orange-600 hover:opacity-90"
+          >
+            <Plus className="mr-1 h-3.5 w-3.5" /> Adicionar
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CheckoutView({
+  orderType, checkoutStep, setCheckoutStep, tableNumber, setTableNumber,
+  customer, setCustomer, address, setAddress, paymentMethod, setPaymentMethod,
+  cart, cartTotal, submitting, onSubmit, onBack,
+}) {
+  const canSubmitLocal = tableNumber && cart.length > 0
+  const canGoPayment = address.street && address.number && address.district && address.city && customer.name && customer.phone
+  const canSubmitDelivery = canGoPayment && paymentMethod && cart.length > 0
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 pt-6">
+      <Button variant="ghost" size="sm" onClick={onBack} className="mb-4 -ml-2 text-muted-foreground">
+        <ArrowLeft className="mr-1 h-4 w-4" /> Voltar ao cardápio
+      </Button>
+
+      <Card className="border-white/10 bg-zinc-900/60">
+        <CardContent className="p-6">
+          {orderType === 'local' ? (
+            <>
+              <div className="mb-6 flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400">
+                  <Utensils className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold">Pedido no Local</h2>
+                  <p className="text-sm text-muted-foreground">Informe o número da sua mesa</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <Label>Número da mesa *</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    placeholder="Ex.: 12"
+                    value={tableNumber}
+                    onChange={(e) => setTableNumber(e.target.value)}
+                    className="mt-1 h-12 border-white/10 bg-white/5 text-lg"
+                  />
+                </div>
+                <div>
+                  <Label>Seu nome (opcional)</Label>
+                  <Input
+                    placeholder="Nome na comanda"
+                    value={customer.name}
+                    onChange={(e) => setCustomer({ ...customer, name: e.target.value })}
+                    className="mt-1 border-white/10 bg-white/5"
+                  />
+                </div>
+              </div>
+            </>
+          ) : checkoutStep === 'info' ? (
+            <>
+              <div className="mb-6 flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-500/10 text-orange-400">
+                  <MapPin className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold">Dados de entrega</h2>
+                  <p className="text-sm text-muted-foreground">Para onde vamos entregar?</p>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <Label>Nome *</Label>
+                  <Input value={customer.name} onChange={(e) => setCustomer({ ...customer, name: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>Telefone *</Label>
+                  <Input value={customer.phone} onChange={(e) => setCustomer({ ...customer, phone: e.target.value })} placeholder="(11) 99999-9999" className="mt-1 border-white/10 bg-white/5" />
+                </div>
+                <div>
+                  <Label>CEP</Label>
+                  <Input value={address.cep} onChange={(e) => setAddress({ ...address, cep: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+                </div>
+                <div>
+                  <Label>Cidade *</Label>
+                  <Input value={address.city} onChange={(e) => setAddress({ ...address, city: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>Endereço (rua) *</Label>
+                  <Input value={address.street} onChange={(e) => setAddress({ ...address, street: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+                </div>
+                <div>
+                  <Label>Número *</Label>
+                  <Input value={address.number} onChange={(e) => setAddress({ ...address, number: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+                </div>
+                <div>
+                  <Label>Bairro *</Label>
+                  <Input value={address.district} onChange={(e) => setAddress({ ...address, district: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>Complemento / Referência</Label>
+                  <Input value={address.complement} onChange={(e) => setAddress({ ...address, complement: e.target.value })} className="mt-1 border-white/10 bg-white/5" placeholder="Apto 12, próximo ao mercado..." />
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="mb-6 flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-500/10 text-orange-400">
+                  <CreditCard className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold">Pagamento</h2>
+                  <p className="text-sm text-muted-foreground">Escolha a forma de pagamento</p>
+                </div>
+              </div>
+              <RadioGroup value={paymentMethod} onValueChange={setPaymentMethod} className="space-y-2">
+                <PaymentOption value="Pix" label="Pix" description="Pague com QR Code na confirmação" icon={<QrCode className="h-5 w-5" />} current={paymentMethod} />
+                <PaymentOption value="Dinheiro" label="Dinheiro" description="Pagamento na entrega" icon={<Banknote className="h-5 w-5" />} current={paymentMethod} />
+                <PaymentOption value="Cartão na entrega" label="Cartão na entrega" description="Débito ou crédito na maquininha" icon={<CreditCard className="h-5 w-5" />} current={paymentMethod} />
+              </RadioGroup>
+              <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-300">
+                💡 Pagamento simulado nesta versão — pedido será registrado como &ldquo;Pendente&rdquo;.
+              </div>
+            </>
+          )}
+
+          <div className="mt-6 rounded-xl border border-white/5 bg-black/30 p-4">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Resumo</div>
+            <div className="space-y-1">
+              {cart.map((i, k) => (
+                <div key={k} className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">{i.quantity}× {i.name}</span>
+                  <span>{brl(i.price * i.quantity)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center justify-between border-t border-white/5 pt-3">
+              <span className="font-semibold">Total</span>
+              <span className="text-2xl font-bold text-amber-400">{brl(cartTotal)}</span>
+            </div>
+          </div>
+
+          <div className="mt-6 flex gap-3">
+            {orderType === 'delivery' && checkoutStep === 'payment' && (
+              <Button variant="outline" onClick={() => setCheckoutStep('info')} className="border-white/10">
+                <ArrowLeft className="mr-1 h-4 w-4" /> Voltar
+              </Button>
+            )}
+            {orderType === 'local' ? (
+              <Button
+                size="lg"
+                disabled={!canSubmitLocal || submitting}
+                onClick={onSubmit}
+                className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 text-base font-semibold hover:opacity-90"
+              >
+                {submitting ? 'Enviando...' : 'Abrir comanda'}
+              </Button>
+            ) : checkoutStep === 'info' ? (
+              <Button
+                size="lg"
+                disabled={!canGoPayment}
+                onClick={() => setCheckoutStep('payment')}
+                className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 text-base font-semibold hover:opacity-90"
+              >
+                Continuar para pagamento →
+              </Button>
+            ) : (
+              <Button
+                size="lg"
+                disabled={!canSubmitDelivery || submitting}
+                onClick={onSubmit}
+                className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 text-base font-semibold hover:opacity-90"
+              >
+                {submitting ? 'Enviando...' : 'Confirmar pedido'}
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function PaymentOption({ value, label, description, icon, current }) {
+  const selected = current === value
+  return (
+    <label className={`flex cursor-pointer items-center gap-3 rounded-xl border p-4 transition ${selected ? 'border-amber-500 bg-amber-500/5' : 'border-white/10 hover:border-white/20'}`}>
+      <RadioGroupItem value={value} />
+      <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${selected ? 'bg-amber-500/20 text-amber-400' : 'bg-white/5 text-muted-foreground'}`}>
+        {icon}
+      </div>
+      <div className="flex-1">
+        <div className="font-medium">{label}</div>
+        <div className="text-xs text-muted-foreground">{description}</div>
+      </div>
+    </label>
+  )
+}
+
+export default App
