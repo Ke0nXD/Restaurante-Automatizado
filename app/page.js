@@ -20,7 +20,7 @@ import { useRouter } from 'next/navigation'
 import {
   ShoppingCart, Search, MapPin, Home, ArrowLeft, Plus, Minus, Trash2, ChefHat,
   Utensils, Bike, Check, Clock, CreditCard, Banknote, QrCode, MessageCircle,
-  User, LogIn, LogOut, LayoutDashboard, Eye,
+  User, LogIn, LogOut, LayoutDashboard, Eye, Copy, CheckCircle2, Loader2,
 } from 'lucide-react'
 import { getUser, getToken, clearAuth, authHeaders } from '@/lib/auth'
 import { useBranding, BrandLogo } from '@/lib/branding'
@@ -47,7 +47,7 @@ function App() {
     cep: '', street: '', number: '', district: '', complement: '',
     reference: '', city: '', state: '',
   })
-  const [paymentMethod, setPaymentMethod] = useState('Pix')
+  const [paymentMethod, setPaymentMethod] = useState('pix')
   const [submitting, setSubmitting] = useState(false)
   const [completedOrder, setCompletedOrder] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -347,18 +347,27 @@ function App() {
 
   if (view === 'success' && completedOrder) {
     const isLocal = completedOrder.type === 'local'
+    const isPixPending = completedOrder.type === 'delivery' && completedOrder.payment?.method === 'pix' && completedOrder.payment?.status === 'aguardando_pagamento'
     return (
       <main className="min-h-screen bg-gradient-to-br from-zinc-950 to-black px-4 py-10">
         <div className="mx-auto max-w-2xl">
+          {isPixPending && (
+            <PixPaymentCard
+              order={completedOrder}
+              onPaid={(updated) => setCompletedOrder({ ...completedOrder, ...updated })}
+            />
+          )}
           <Card className="border-white/10 bg-zinc-900/60 backdrop-blur">
             <CardContent className="p-8">
               <div className="mb-6 flex flex-col items-center text-center">
-                <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-green-600 shadow-lg shadow-emerald-500/30">
-                  <Check className="h-10 w-10 text-white" />
+                <div className={`mb-4 flex h-20 w-20 items-center justify-center rounded-full shadow-lg ${isPixPending ? 'bg-gradient-to-br from-amber-500 to-orange-600 shadow-amber-500/30' : 'bg-gradient-to-br from-emerald-500 to-green-600 shadow-emerald-500/30'}`}>
+                  {isPixPending ? <Clock className="h-10 w-10 text-white" /> : <Check className="h-10 w-10 text-white" />}
                 </div>
-                <h2 className="text-3xl font-bold">Pedido confirmado!</h2>
+                <h2 className="text-3xl font-bold">{isPixPending ? 'Aguardando pagamento PIX' : 'Pedido confirmado!'}</h2>
                 <p className="mt-2 text-muted-foreground">
-                  {isLocal
+                  {isPixPending
+                    ? 'O pedido será confirmado automaticamente assim que o pagamento for identificado.'
+                    : isLocal
                     ? `Sua comanda foi aberta na mesa ${completedOrder.table}.`
                     : 'Seu pedido foi enviado ao restaurante.'}
                 </p>
@@ -410,7 +419,7 @@ function App() {
               </div>
 
               <div className="flex flex-col gap-2 sm:flex-row">
-                <Button onClick={resetAll} className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 hover:opacity-90">
+                <Button onClick={resetAll} className="flex-1 bg-brand-gradient hover:opacity-90">
                   <Home className="mr-2 h-4 w-4" /> Voltar ao início
                 </Button>
                 <Link href={`/pedido/${completedOrder.id}`} className="flex-1">
@@ -524,7 +533,7 @@ function App() {
                       <Button
                         onClick={() => { setCartOpen(false); setView('checkout') }}
                         size="lg"
-                        className="w-full bg-gradient-to-r from-amber-500 to-orange-600 text-base font-semibold hover:opacity-90"
+                        className="w-full bg-brand-gradient text-base font-semibold hover:opacity-90"
                       >
                         Finalizar pedido →
                       </Button>
@@ -595,7 +604,7 @@ function App() {
                 {banner.title && <h2 className="text-2xl font-bold sm:text-4xl">{banner.title}</h2>}
                 {banner.subtitle && <p className="mt-2 max-w-md text-sm text-muted-foreground sm:text-base">{banner.subtitle}</p>}
                 {banner.buttonText && banner.buttonLink && (
-                  <a href={banner.buttonLink} className="mt-4 inline-flex w-fit rounded-full bg-gradient-to-r from-amber-500 to-orange-600 px-5 py-2 text-sm font-semibold text-black">{banner.buttonText}</a>
+                  <a href={banner.buttonLink} className="mt-4 inline-flex w-fit rounded-full bg-brand-gradient px-5 py-2 text-sm font-semibold text-black">{banner.buttonText}</a>
                 )}
               </div>
             </div>
@@ -633,7 +642,7 @@ function App() {
                       <CardContent className="flex-1 p-4">
                         <h4 className="font-bold leading-tight">{promo.title}</h4>
                         <p className="mt-1 text-xs text-muted-foreground">{promo.description}</p>
-                        {promo.priceText && <div className="mt-3 inline-flex rounded-full bg-gradient-to-r from-amber-500 to-orange-600 px-3 py-1 text-sm font-bold text-black">{promo.priceText}</div>}
+                        {promo.priceText && <div className="mt-3 inline-flex rounded-full bg-brand-gradient px-3 py-1 text-sm font-bold text-black">{promo.priceText}</div>}
                       </CardContent>
                     </div>
                   </Card>
@@ -670,7 +679,7 @@ function App() {
       {cart.length > 0 && view === 'menu' && (
         <button
           onClick={() => setCartOpen(true)}
-          className="fixed bottom-5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-gradient-to-r from-amber-500 to-orange-600 px-5 py-3 text-sm font-semibold text-black shadow-2xl shadow-amber-500/30 transition hover:scale-105"
+          className="fixed bottom-5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-brand-gradient px-5 py-3 text-sm font-semibold text-black shadow-2xl shadow-amber-500/30 transition hover:scale-105"
         >
           <ShoppingCart className="h-4 w-4" />
           Ver carrinho ({cartCount})
@@ -713,7 +722,7 @@ function App() {
                   </div>
                   <Button
                     onClick={() => { addToCart(detailProduct, detailQty, detailObs); setDetailProduct(null) }}
-                    className="bg-gradient-to-r from-amber-500 to-orange-600 hover:opacity-90"
+                    className="bg-brand-gradient hover:opacity-90"
                   >
                     Adicionar {brl(detailProduct.price * detailQty)}
                   </Button>
@@ -744,7 +753,7 @@ function App() {
                   localStorage.setItem('sabor_redirect_after_login', '/')
                   router.push('/login')
                 }}
-                className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600"
+                className="flex-1 bg-brand-gradient"
               >
                 <LogIn className="mr-1 h-4 w-4" /> Entrar / Cadastrar
               </Button>
@@ -797,7 +806,7 @@ function ProductCard({ product, onOpen, onAdd }) {
           <Button
             size="sm"
             onClick={onAdd}
-            className="bg-gradient-to-r from-amber-500 to-orange-600 hover:opacity-90"
+            className="bg-brand-gradient hover:opacity-90"
           >
             <Plus className="mr-1 h-3.5 w-3.5" /> Adicionar
           </Button>
@@ -928,22 +937,29 @@ function CheckoutView({
                   paymentMethods.map((m) => {
                     const icons = {
                       pix: <QrCode className="h-5 w-5" />,
+                      card_delivery: <CreditCard className="h-5 w-5" />,
+                      cash_delivery: <Banknote className="h-5 w-5" />,
+                      // legacy
                       credit_card: <CreditCard className="h-5 w-5" />,
                       debit_card: <CreditCard className="h-5 w-5" />,
                       cash_on_delivery: <Banknote className="h-5 w-5" />,
                     }
                     const descs = {
-                      pix: 'Pague com QR Code na confirmação',
+                      pix: 'Gera QR Code na tela — confirmação automática',
+                      card_delivery: 'O motoboy levará a maquininha até você',
+                      cash_delivery: 'Pagamento em dinheiro no momento da entrega',
                       credit_card: 'Cartão de crédito na maquininha',
                       debit_card: 'Cartão de débito na maquininha',
                       cash_on_delivery: 'Pagamento em dinheiro na entrega',
                     }
-                    return <PaymentOption key={m.id} value={m.label} label={m.label} description={descs[m.id] || ''} icon={icons[m.id] || <CreditCard className="h-5 w-5" />} current={paymentMethod} />
+                    return <PaymentOption key={m.id} value={m.id} label={m.label} description={descs[m.id] || ''} icon={icons[m.id] || <CreditCard className="h-5 w-5" />} current={paymentMethod} />
                   })
                 )}
               </RadioGroup>
-              <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-300">
-                💡 Pagamento simulado nesta versão — pedido será registrado como &ldquo;Pendente&rdquo;.
+              <div className="mt-3 rounded-lg border border-white/10 bg-black/30 p-3 text-xs text-muted-foreground">
+                {paymentMethod === 'pix' && '🟢 Após o pedido, exibiremos o QR Code. O pedido é confirmado automaticamente assim que o pagamento for identificado.'}
+                {paymentMethod === 'card_delivery' && '💳 Pagamento será feito na entrega com o motoboy. Status permanece "Pendente entrega" até a confirmação.'}
+                {paymentMethod === 'cash_delivery' && '💵 Separe o valor em dinheiro. Pagamento na entrega — tenha troco preparado, se possível.'}
               </div>
             </>
           )}
@@ -975,7 +991,7 @@ function CheckoutView({
                 size="lg"
                 disabled={!canSubmitLocal || submitting}
                 onClick={onSubmit}
-                className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 text-base font-semibold hover:opacity-90"
+                className="flex-1 bg-brand-gradient text-base font-semibold hover:opacity-90"
               >
                 {submitting ? 'Enviando...' : 'Abrir comanda'}
               </Button>
@@ -984,7 +1000,7 @@ function CheckoutView({
                 size="lg"
                 disabled={!canGoPayment}
                 onClick={() => setCheckoutStep('payment')}
-                className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 text-base font-semibold hover:opacity-90"
+                className="flex-1 bg-brand-gradient text-base font-semibold hover:opacity-90"
               >
                 Continuar para pagamento →
               </Button>
@@ -993,7 +1009,7 @@ function CheckoutView({
                 size="lg"
                 disabled={!canSubmitDelivery || submitting}
                 onClick={onSubmit}
-                className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 text-base font-semibold hover:opacity-90"
+                className="flex-1 bg-brand-gradient text-base font-semibold hover:opacity-90"
               >
                 {submitting ? 'Enviando...' : 'Confirmar pedido'}
               </Button>
@@ -1055,7 +1071,7 @@ function PayComandaStep({ onBack }) {
             <div className="flex justify-between text-sm"><span className="text-muted-foreground">Forma de pagamento</span><span>{comanda.paymentMethod}</span></div>
             <div className="mt-2 flex justify-between border-t border-white/5 pt-2"><span className="font-semibold">Total</span><span className="text-xl font-bold text-amber-400">{brl(comanda.total)}</span></div>
           </div>
-          <Button onClick={onBack} className="mt-6 w-full bg-gradient-to-r from-amber-500 to-orange-600">Voltar ao cardápio</Button>
+          <Button onClick={onBack} className="mt-6 w-full bg-brand-gradient">Voltar ao cardápio</Button>
         </CardContent>
       </Card>
     )
@@ -1102,6 +1118,141 @@ function PaymentOption({ value, label, description, icon, current }) {
         <div className="text-xs text-muted-foreground">{description}</div>
       </div>
     </label>
+  )
+}
+
+function PixPaymentCard({ order, onPaid }) {
+  const [copied, setCopied] = useState(false)
+  const [status, setStatus] = useState(order.payment?.status || 'aguardando_pagamento')
+  const [secondsLeft, setSecondsLeft] = useState(() => {
+    const exp = order.pix?.expiresAt ? new Date(order.pix.expiresAt).getTime() : Date.now() + 15 * 60 * 1000
+    return Math.max(0, Math.floor((exp - Date.now()) / 1000))
+  })
+
+  // Countdown
+  useEffect(() => {
+    if (status !== 'aguardando_pagamento') return
+    const iv = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(iv)
+  }, [status])
+
+  // Polling status
+  useEffect(() => {
+    if (status !== 'aguardando_pagamento') return
+    const iv = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/orders/${order.id}/pix-status`, { cache: 'no-store' })
+        if (!r.ok) return
+        const d = await r.json()
+        if (d.paymentStatus === 'pago') {
+          setStatus('pago')
+          toast.success('Pagamento PIX confirmado! ✅')
+          onPaid?.({ payment: { ...order.payment, status: 'pago' }, status: d.orderStatus || order.status })
+        } else if (d.paymentStatus === 'expirado') {
+          setStatus('expirado')
+          toast.error('O código PIX expirou. Gere um novo.')
+        }
+      } catch {}
+    }, 5000)
+    return () => clearInterval(iv)
+  }, [order.id, status, onPaid, order.payment, order.status])
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(order.pix?.copyPaste || '')
+      setCopied(true)
+      toast.success('Código copiado!')
+      setTimeout(() => setCopied(false), 2000)
+    } catch { toast.error('Não foi possível copiar') }
+  }
+
+  const regenerate = async () => {
+    try {
+      const r = await fetch(`/api/orders/${order.id}/pix-regenerate`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() } })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || 'Erro')
+      onPaid?.(d)
+      setStatus('aguardando_pagamento')
+      setSecondsLeft(Math.max(0, Math.floor((new Date(d.pix.expiresAt).getTime() - Date.now()) / 1000)))
+      toast.success('Novo PIX gerado')
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const mm = String(Math.floor(secondsLeft / 60)).padStart(2, '0')
+  const ss = String(secondsLeft % 60).padStart(2, '0')
+
+  if (status === 'pago') {
+    return (
+      <Card className="mb-4 border-emerald-500/30 bg-emerald-500/10">
+        <CardContent className="flex items-center gap-3 p-4">
+          <CheckCircle2 className="h-6 w-6 text-emerald-400" />
+          <div>
+            <div className="font-semibold text-emerald-300">Pagamento confirmado</div>
+            <div className="text-xs text-emerald-200/80">Seu pedido foi enviado à cozinha.</div>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (status === 'expirado') {
+    return (
+      <Card className="mb-4 border-red-500/30 bg-red-500/10">
+        <CardContent className="p-4">
+          <div className="mb-2 flex items-center gap-3">
+            <Clock className="h-5 w-5 text-red-400" />
+            <div className="font-semibold text-red-300">Código PIX expirado</div>
+          </div>
+          <Button onClick={regenerate} size="sm" className="bg-brand-gradient">Gerar novo PIX</Button>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card className="mb-4 border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-orange-500/5">
+      <CardContent className="p-6">
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <QrCode className="h-5 w-5 text-amber-400" />
+            <div className="font-semibold">Pague com PIX</div>
+          </div>
+          <Badge variant="secondary" className="bg-black/40 font-mono text-amber-300">
+            <Loader2 className="mr-1 h-3 w-3 animate-spin" /> {mm}:{ss}
+          </Badge>
+        </div>
+        <div className="grid gap-4 md:grid-cols-[auto,1fr]">
+          <div className="mx-auto flex h-48 w-48 items-center justify-center rounded-xl bg-white p-2 md:h-56 md:w-56">
+            {order.pix?.qrDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={order.pix.qrDataUrl} alt="QR Code PIX" className="h-full w-full" />
+            ) : (
+              <div className="text-sm text-zinc-600">QR indisponível</div>
+            )}
+          </div>
+          <div className="space-y-3">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">Valor</div>
+              <div className="text-2xl font-bold text-amber-300">{brl(order.total)}</div>
+            </div>
+            <div>
+              <div className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">PIX Copia e Cola</div>
+              <div className="flex gap-2">
+                <code className="line-clamp-2 flex-1 break-all rounded-lg bg-black/40 p-2 text-[10px] text-muted-foreground">
+                  {order.pix?.copyPaste || ''}
+                </code>
+                <Button size="sm" variant="outline" onClick={copy} className="h-auto shrink-0 border-white/10">
+                  {copied ? <CheckCircle2 className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                </Button>
+              </div>
+            </div>
+            <div className="rounded-lg border border-white/5 bg-black/20 p-2 text-[11px] text-muted-foreground">
+              Abra o app do seu banco, escolha PIX → Pagar com QR Code (ou use o código copia e cola). Seu pedido será confirmado automaticamente em segundos.
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

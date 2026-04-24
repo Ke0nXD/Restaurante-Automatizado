@@ -21,10 +21,11 @@ import {
   ChefHat, LogOut, LayoutDashboard, Utensils, Bike, ClipboardList, Package,
   Tag, Users, Plus, Pencil, Trash2, Clock, Check, TrendingUp, DollarSign, ShoppingBag,
   Bell, CreditCard, Banknote, QrCode, CheckCircle2, Search, Menu, X, Calendar,
-  Sparkles, Image as ImageIcon, Star, Flame, Settings, Upload,
+  Sparkles, Image as ImageIcon, Star, Flame, Settings, Upload, Palette, Sun, Moon, Monitor, Copy,
 } from 'lucide-react'
 import { apiFetch, getUser, clearAuth, getToken } from '@/lib/auth'
 import { refreshBranding, BrandLogo, useBranding } from '@/lib/branding'
+import { useTheme, DEFAULT_THEME, contrastRatio, wcagLabel } from '@/lib/theme'
 
 const brl = (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const LOCAL_STATUSES = ['Recebido', 'Em preparo', 'Pronto', 'Entregue', 'Finalizado']
@@ -55,6 +56,7 @@ const TABS = [
   { value: 'categories', label: 'Categorias', Icon: Tag, roles: ['owner_admin', 'admin'] },
   { value: 'content', label: 'Conteúdo', Icon: Sparkles, roles: ['owner_admin', 'admin'] },
   { value: 'payments', label: 'Pagamentos', Icon: CreditCard, roles: ['owner_admin', 'admin'] },
+  { value: 'theme', label: 'Tema', Icon: Palette, roles: ['owner_admin', 'admin'] },
   { value: 'settings', label: 'Configurações', Icon: Settings, roles: ['owner_admin', 'admin'] },
   { value: 'users', label: 'Usuários', Icon: Users, roles: ['owner_admin', 'admin'] },
 ]
@@ -382,6 +384,22 @@ function AdminPage() {
     })
   }
 
+  const confirmPix = async (orderId) => {
+    askConfirm({
+      title: 'Confirmar pagamento PIX?',
+      description: 'Use apenas se confirmou o recebimento fora do sistema. Em provedor real, isso é feito automaticamente via webhook.',
+      confirmLabel: 'Confirmar pagamento',
+      destructive: false,
+      onConfirm: async () => {
+        try {
+          const updated = await apiFetch(`/api/orders/${orderId}/pix-confirm`, { method: 'POST', body: JSON.stringify({}) })
+          setOrders((prev) => prev.map((o) => o.id === orderId ? updated : o))
+          toast.success('Pagamento PIX confirmado')
+        } catch (e) { toast.error(e.message) }
+      },
+    })
+  }
+
   const saveDeliveryStatus = async (orderId, deliveryStatus, deliveryObservation) => {
     try {
       const updated = await apiFetch(`/api/admin/orders/${orderId}`, {
@@ -587,8 +605,8 @@ function AdminPage() {
               loading={loading}
             />
           )}
-          {tab === 'local' && <OrdersList orders={localOrders} statuses={LOCAL_STATUSES} onStatusChange={changeStatus} loading={loading} isOwner={isOwner} onDelete={deleteOrder} onUpdatePayment={updatePayment} />}
-          {tab === 'delivery' && <OrdersList orders={deliveryOrders} statuses={DELIVERY_STATUSES} onStatusChange={changeStatus} loading={loading} isOwner={isOwner} onDelete={deleteOrder} onUpdatePayment={updatePayment} isDriver={isDriver} onDeliveryAction={(o) => setDeliveryDialog({ order: o, status: 'Entregue', observation: '' })} />}
+          {tab === 'local' && <OrdersList orders={localOrders} statuses={LOCAL_STATUSES} onStatusChange={changeStatus} loading={loading} isOwner={isOwner} onDelete={deleteOrder} onUpdatePayment={updatePayment} onConfirmPix={confirmPix} />}
+          {tab === 'delivery' && <OrdersList orders={deliveryOrders} statuses={DELIVERY_STATUSES} onStatusChange={changeStatus} loading={loading} isOwner={isOwner} onDelete={deleteOrder} onUpdatePayment={updatePayment} onConfirmPix={confirmPix} isDriver={isDriver} onDeliveryAction={(o) => setDeliveryDialog({ order: o, status: 'Entregue', observation: '' })} />}
           {tab === 'history' && isOwner && <OrdersList orders={historyOrders} statuses={[...LOCAL_STATUSES, ...DELIVERY_STATUSES]} onStatusChange={changeStatus} loading={loading} isOwner={isOwner} onDelete={deleteOrder} onUpdatePayment={updatePayment} history />}
           {tab === 'products' && isOwner && (
             <ProductsTab products={products} categories={categories} onEdit={setEditProduct} onDelete={deleteProduct} onNew={() => setEditProduct({ name: '', description: '', price: 0, image: '', categoryId: categories[0]?.id, active: true })} />
@@ -607,6 +625,7 @@ function AdminPage() {
             />
           )}
           {tab === 'payments' && isOwner && <PaymentsTab methods={paymentMethodsConfig} onSave={savePaymentMethodsConfig} />}
+          {tab === 'theme' && isOwner && <ThemeTab />}
         </div>
       </div>
 
@@ -659,7 +678,7 @@ function AdminPage() {
             <div><Label>URL da imagem</Label><Input value={editProduct.image} onChange={(e) => setEditProduct({ ...editProduct, image: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
             <div className="flex items-center justify-between rounded-lg border border-white/10 p-3"><Label>Ativo</Label><Switch checked={editProduct.active} onCheckedChange={(v) => setEditProduct({ ...editProduct, active: v })} /></div>
           </div>)}
-          <DialogFooter><Button variant="outline" onClick={() => setEditProduct(null)}>Cancelar</Button><Button onClick={() => saveProduct(editProduct)} className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setEditProduct(null)}>Cancelar</Button><Button onClick={() => saveProduct(editProduct)} className="bg-brand-gradient">Salvar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -672,7 +691,7 @@ function AdminPage() {
               <div><Label>Ordem</Label><Input type="number" value={editCategory.order} onChange={(e) => setEditCategory({ ...editCategory, order: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
             </div>
           </div>)}
-          <DialogFooter><Button variant="outline" onClick={() => setEditCategory(null)}>Cancelar</Button><Button onClick={() => saveCategory(editCategory)} className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setEditCategory(null)}>Cancelar</Button><Button onClick={() => saveCategory(editCategory)} className="bg-brand-gradient">Salvar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog open={!!editBanner} onOpenChange={(o) => !o && setEditBanner(null)}>
@@ -690,7 +709,7 @@ function AdminPage() {
             <div className="flex items-center justify-between rounded-lg border border-white/10 p-3"><Label>Ativo (aparece no cardápio)</Label><Switch checked={!!editBanner.active} onCheckedChange={(v) => setEditBanner({ ...editBanner, active: v })} /></div>
             <p className="text-xs text-muted-foreground">⚠️ Apenas um banner pode estar ativo por vez. Ativar este desativa os outros.</p>
           </div>)}
-          <DialogFooter><Button variant="outline" onClick={() => setEditBanner(null)}>Cancelar</Button><Button onClick={() => saveBanner(editBanner)} className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setEditBanner(null)}>Cancelar</Button><Button onClick={() => saveBanner(editBanner)} className="bg-brand-gradient">Salvar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -707,7 +726,7 @@ function AdminPage() {
             </div>
             <div className="flex items-center justify-between rounded-lg border border-white/10 p-3"><Label>Ativa</Label><Switch checked={!!editPromo.active} onCheckedChange={(v) => setEditPromo({ ...editPromo, active: v })} /></div>
           </div>)}
-          <DialogFooter><Button variant="outline" onClick={() => setEditPromo(null)}>Cancelar</Button><Button onClick={() => savePromo(editPromo)} className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setEditPromo(null)}>Cancelar</Button><Button onClick={() => savePromo(editPromo)} className="bg-brand-gradient">Salvar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -730,7 +749,7 @@ function AdminPage() {
                   try { await fn() } catch (e) { toast.error(e?.message || 'Erro') }
                 }
               }}
-              className={confirmState.destructive ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-gradient-to-r from-amber-500 to-orange-600'}
+              className={confirmState.destructive ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-brand-gradient'}
             >
               {confirmState.confirmLabel || 'Confirmar'}
             </AlertDialogAction>
@@ -754,7 +773,7 @@ function ContentTab({ banners, promotions, products, onEditBanner, onDeleteBanne
       <TabsContent value="banner">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold">Banners ({banners.length})</h3>
-          <Button onClick={() => onEditBanner({ title: '', subtitle: '', image: '', buttonText: '', buttonLink: '', active: true })} className="bg-gradient-to-r from-amber-500 to-orange-600"><Plus className="mr-1 h-4 w-4" /> Novo banner</Button>
+          <Button onClick={() => onEditBanner({ title: '', subtitle: '', image: '', buttonText: '', buttonLink: '', active: true })} className="bg-brand-gradient"><Plus className="mr-1 h-4 w-4" /> Novo banner</Button>
         </div>
         <div className="space-y-3">
           {banners.map((b) => (
@@ -780,7 +799,7 @@ function ContentTab({ banners, promotions, products, onEditBanner, onDeleteBanne
       <TabsContent value="promotions">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold">Promoções ({promotions.length})</h3>
-          <Button onClick={() => onEditPromo({ title: '', description: '', image: '', priceText: '', active: true, order: promotions.length + 1 })} className="bg-gradient-to-r from-amber-500 to-orange-600"><Plus className="mr-1 h-4 w-4" /> Nova promoção</Button>
+          <Button onClick={() => onEditPromo({ title: '', description: '', image: '', priceText: '', active: true, order: promotions.length + 1 })} className="bg-brand-gradient"><Plus className="mr-1 h-4 w-4" /> Nova promoção</Button>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           {promotions.map((p) => (
@@ -974,7 +993,7 @@ function ComandaList({ list, onPayRequest, onAction, onStatusChange, loading, em
   )
 }
 
-function OrdersList({ orders, statuses, onStatusChange, loading, isOwner, isDriver, onDelete, onUpdatePayment, onDeliveryAction, history }) {
+function OrdersList({ orders, statuses, onStatusChange, loading, isOwner, isDriver, onDelete, onUpdatePayment, onDeliveryAction, onConfirmPix, history }) {
   if (loading) return <p className="text-muted-foreground">Carregando...</p>
   if (!orders.length) return <Card className="border-white/10 bg-zinc-900/60"><CardContent className="p-10 text-center text-muted-foreground">Nenhum pedido</CardContent></Card>
   return (
@@ -1013,7 +1032,10 @@ function OrdersList({ orders, statuses, onStatusChange, loading, isOwner, isDriv
             {isDriver && o.type === 'delivery' && !o.delivery?.status && (
               <Button onClick={() => onDeliveryAction(o)} size="sm" className="bg-gradient-to-r from-emerald-500 to-green-600"><CheckCircle2 className="mr-1 h-4 w-4"/>Marcar entrega</Button>
             )}
-            {!isDriver && o.payment?.status !== 'Pago' && !history && (
+            {!isDriver && !history && o.payment?.method === 'pix' && o.payment?.status === 'aguardando_pagamento' && onConfirmPix && (
+              <Button onClick={() => onConfirmPix(o.id)} size="sm" className="bg-gradient-to-r from-emerald-500 to-green-600"><QrCode className="mr-1 h-3 w-3"/>Confirmar PIX manualmente</Button>
+            )}
+            {!isDriver && o.payment?.status !== 'pago' && o.payment?.status !== 'Pago' && !history && (
               <Select value="" onValueChange={(v) => onUpdatePayment(o.id, 'Pago', v)}>
                 <SelectTrigger className="h-8 border-emerald-500/30 bg-emerald-500/10 text-xs w-48 text-emerald-300"><SelectValue placeholder="💰 Marcar como pago (método)" /></SelectTrigger>
                 <SelectContent>
@@ -1033,7 +1055,7 @@ function OrdersList({ orders, statuses, onStatusChange, loading, isOwner, isDriv
 
 function ProductsTab({ products, categories, onEdit, onDelete, onNew }) {
   return (<>
-    <div className="mb-4 flex items-center justify-between"><h3 className="text-lg font-semibold">Produtos ({products.length})</h3><Button onClick={onNew} className="bg-gradient-to-r from-amber-500 to-orange-600"><Plus className="mr-1 h-4 w-4" /> Novo</Button></div>
+    <div className="mb-4 flex items-center justify-between"><h3 className="text-lg font-semibold">Produtos ({products.length})</h3><Button onClick={onNew} className="bg-brand-gradient"><Plus className="mr-1 h-4 w-4" /> Novo</Button></div>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {products.map((p) => { const cat = categories.find((c) => c.id === p.categoryId); return (
         <Card key={p.id} className="border-white/10 bg-zinc-900/60"><CardContent className="p-4">
@@ -1049,7 +1071,7 @@ function ProductsTab({ products, categories, onEdit, onDelete, onNew }) {
 
 function CategoriesTab({ categories, onEdit, onDelete, onNew }) {
   return (<>
-    <div className="mb-4 flex items-center justify-between"><h3 className="text-lg font-semibold">Categorias ({categories.length})</h3><Button onClick={onNew} className="bg-gradient-to-r from-amber-500 to-orange-600"><Plus className="mr-1 h-4 w-4" /> Nova</Button></div>
+    <div className="mb-4 flex items-center justify-between"><h3 className="text-lg font-semibold">Categorias ({categories.length})</h3><Button onClick={onNew} className="bg-brand-gradient"><Plus className="mr-1 h-4 w-4" /> Nova</Button></div>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{categories.map((c) => (
       <Card key={c.id} className="border-white/10 bg-zinc-900/60"><CardContent className="flex items-center justify-between p-4"><div className="flex items-center gap-3"><div className="text-3xl">{c.icon}</div><div><div className="font-semibold">{c.name}</div><div className="text-xs text-muted-foreground">Ordem: {c.order}</div></div></div><div className="flex gap-1"><Button size="sm" variant="outline" className="border-white/10" onClick={() => onEdit(c)}><Pencil className="h-3 w-3" /></Button><Button size="sm" variant="outline" className="border-white/10 text-red-400" onClick={() => onDelete(c.id)}><Trash2 className="h-3 w-3" /></Button></div></CardContent></Card>
     ))}</div>
@@ -1062,7 +1084,7 @@ function UsersTab({ users, orders, onSave, onDelete }) {
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-lg font-semibold">Usuários e Permissões ({users.length})</h3>
-        <Button onClick={() => setEditing({ email: '', password: '', name: '', role: 'attendant' })} className="bg-gradient-to-r from-amber-500 to-orange-600"><Plus className="mr-1 h-4 w-4" /> Novo usuário</Button>
+        <Button onClick={() => setEditing({ email: '', password: '', name: '', role: 'attendant' })} className="bg-brand-gradient"><Plus className="mr-1 h-4 w-4" /> Novo usuário</Button>
       </div>
       <Card className="border-white/10 bg-zinc-900/60"><CardContent className="p-0"><div className="divide-y divide-white/5">
         {users.map((u) => { const userOrders = orders.filter((o) => o.userId === u.id); const roleLabel = ROLES[u.role] || u.role; return (
@@ -1104,7 +1126,7 @@ function UsersTab({ users, orders, onSave, onDelete }) {
           </div>)}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)}>Cancelar</Button>
-            <Button onClick={async () => { const ok = await onSave(editing); if (ok) setEditing(null) }} className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar</Button>
+            <Button onClick={async () => { const ok = await onSave(editing); if (ok) setEditing(null) }} className="bg-brand-gradient">Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1114,42 +1136,144 @@ function UsersTab({ users, orders, onSave, onDelete }) {
 
 function PaymentsTab({ methods, onSave }) {
   const [local, setLocal] = useState(methods)
+  const [pixCfg, setPixCfg] = useState(null)
+  const [savingPix, setSavingPix] = useState(false)
   useEffect(() => { setLocal(methods) }, [methods])
+  useEffect(() => {
+    apiFetch('/api/admin/pix-config').then(setPixCfg).catch(() => {})
+  }, [])
   const toggle = (i) => setLocal((prev) => prev.map((m, k) => k === i ? { ...m, active: !m.active } : m))
-  const anyActive = local.some((m) => m.active)
+  const anyActive = (local || []).some((m) => m.active)
+  const savePix = async () => {
+    setSavingPix(true)
+    try {
+      const updated = await apiFetch('/api/admin/pix-config', { method: 'PATCH', body: JSON.stringify(pixCfg) })
+      setPixCfg(updated)
+      toast.success('Configuração PIX salva')
+    } catch (e) { toast.error(e.message) }
+    finally { setSavingPix(false) }
+  }
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Métodos de pagamento do Delivery</h2>
-        <p className="text-sm text-muted-foreground">Escolha quais métodos aparecem no checkout dos pedidos delivery.</p>
+        <h2 className="text-2xl font-bold">Pagamentos do Delivery</h2>
+        <p className="text-sm text-muted-foreground">Configure os métodos aceitos e a integração PIX.</p>
       </div>
       {!anyActive && (
         <Card className="border-red-500/30 bg-red-500/5"><CardContent className="p-4"><p className="text-sm text-red-300">⚠️ Nenhum método ativo — clientes não conseguirão finalizar pedidos delivery. Ative ao menos um método abaixo.</p></CardContent></Card>
       )}
-      <Card className="border-white/10 bg-zinc-900/60"><CardContent className="p-0">
-        <div className="divide-y divide-white/5">
-          {local.map((m, i) => (
-            <div key={m.id} className="flex items-center justify-between p-4">
-              <div className="flex items-center gap-3">
-                <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${m.active ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-muted-foreground'}`}>
-                  {m.id === 'pix' && <QrCode className="h-5 w-5" />}
-                  {m.id === 'credit_card' && <CreditCard className="h-5 w-5" />}
-                  {m.id === 'debit_card' && <CreditCard className="h-5 w-5" />}
-                  {m.id === 'cash_on_delivery' && <Banknote className="h-5 w-5" />}
+
+      <Card className="border-white/10 bg-zinc-900/60">
+        <CardContent className="p-0">
+          <div className="border-b border-white/10 p-4">
+            <h3 className="font-semibold">Métodos aceitos</h3>
+            <p className="text-xs text-muted-foreground">Escolha quais aparecem no checkout de delivery.</p>
+          </div>
+          <div className="divide-y divide-white/5">
+            {(local || []).map((m, i) => (
+              <div key={m.id} className="flex items-center justify-between p-4">
+                <div className="flex items-center gap-3">
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${m.active ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-muted-foreground'}`}>
+                    {m.id === 'pix' && <QrCode className="h-5 w-5" />}
+                    {(m.id === 'card_delivery' || m.id === 'credit_card' || m.id === 'debit_card') && <CreditCard className="h-5 w-5" />}
+                    {(m.id === 'cash_delivery' || m.id === 'cash_on_delivery') && <Banknote className="h-5 w-5" />}
+                  </div>
+                  <div>
+                    <div className="font-medium">{m.label}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {m.id === 'pix' ? 'Online — confirmação automática' : m.id.includes('card') ? 'Na entrega — maquininha com motoboy' : m.id.includes('cash') ? 'Na entrega — dinheiro' : (m.active ? 'Disponível no checkout' : 'Oculto para clientes')}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <div className="font-medium">{m.label}</div>
-                  <div className="text-xs text-muted-foreground">{m.active ? 'Disponível no checkout' : 'Oculto para clientes'}</div>
+                <Switch checked={m.active} onCheckedChange={() => toggle(i)} />
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end border-t border-white/10 p-3">
+            <Button onClick={() => onSave(local)} className="bg-brand-gradient">Salvar métodos</Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* PIX Configuration */}
+      <Card className="border-white/10 bg-zinc-900/60">
+        <CardContent className="p-6">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h3 className="font-semibold flex items-center gap-2"><QrCode className="h-4 w-4 text-amber-400" /> Integração PIX</h3>
+              <p className="text-xs text-muted-foreground">Dados usados para gerar BR Code e confirmar pagamentos. Em modo <Badge variant="outline" className="ml-1 border-amber-500/30 text-amber-300">stub</Badge> o QR é gerado localmente e a confirmação é manual/simulada.</p>
+            </div>
+          </div>
+          {pixCfg ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <Label className="text-xs">Provedor</Label>
+                <Select value={pixCfg.provider || 'stub'} onValueChange={(v) => setPixCfg({ ...pixCfg, provider: v })}>
+                  <SelectTrigger className="mt-1 border-white/10 bg-white/5"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="stub">🧪 Stub (testes / sem integração)</SelectItem>
+                    <SelectItem value="mercadopago">Mercado Pago</SelectItem>
+                    <SelectItem value="efi">Efí / Gerencianet</SelectItem>
+                    <SelectItem value="asaas">Asaas</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Ambiente</Label>
+                <Select value={pixCfg.environment || 'sandbox'} onValueChange={(v) => setPixCfg({ ...pixCfg, environment: v })}>
+                  <SelectTrigger className="mt-1 border-white/10 bg-white/5"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="sandbox">Sandbox / Teste</SelectItem>
+                    <SelectItem value="production">Produção</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Chave PIX do recebedor</Label>
+                <Input value={pixCfg.pixKey || ''} onChange={(e) => setPixCfg({ ...pixCfg, pixKey: e.target.value })} placeholder="email / CPF / CNPJ / telefone" className="mt-1 border-white/10 bg-white/5" />
+              </div>
+              <div>
+                <Label className="text-xs">Tempo de expiração (minutos)</Label>
+                <Input type="number" min={1} max={120} value={pixCfg.expirationMinutes || 15} onChange={(e) => setPixCfg({ ...pixCfg, expirationMinutes: Number(e.target.value) })} className="mt-1 border-white/10 bg-white/5" />
+              </div>
+              <div>
+                <Label className="text-xs">Nome do recebedor</Label>
+                <Input value={pixCfg.merchantName || ''} onChange={(e) => setPixCfg({ ...pixCfg, merchantName: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+              </div>
+              <div>
+                <Label className="text-xs">Cidade (sem acento, maiúsculas)</Label>
+                <Input value={pixCfg.merchantCity || ''} onChange={(e) => setPixCfg({ ...pixCfg, merchantCity: e.target.value.toUpperCase() })} className="mt-1 border-white/10 bg-white/5" />
+              </div>
+              <div className="md:col-span-2 rounded-lg border border-white/5 bg-black/30 p-3">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Credenciais do provedor (opcionais para stub)</div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <Label className="text-xs">API Key / Access Token</Label>
+                    <Input type="password" value={pixCfg.apiKey || ''} onChange={(e) => setPixCfg({ ...pixCfg, apiKey: e.target.value })} placeholder="••••••" className="mt-1 border-white/10 bg-white/5" />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Client ID</Label>
+                    <Input value={pixCfg.clientId || ''} onChange={(e) => setPixCfg({ ...pixCfg, clientId: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Client Secret</Label>
+                    <Input type="password" value={pixCfg.clientSecret || ''} onChange={(e) => setPixCfg({ ...pixCfg, clientSecret: e.target.value })} placeholder="••••••" className="mt-1 border-white/10 bg-white/5" />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Webhook URL</Label>
+                    <Input value={pixCfg.webhookUrl || ''} onChange={(e) => setPixCfg({ ...pixCfg, webhookUrl: e.target.value })} placeholder="https://..." className="mt-1 border-white/10 bg-white/5" />
+                  </div>
                 </div>
               </div>
-              <Switch checked={m.active} onCheckedChange={() => toggle(i)} />
+              <div className="md:col-span-2 flex justify-end">
+                <Button disabled={savingPix} onClick={savePix} className="bg-brand-gradient">{savingPix ? 'Salvando...' : 'Salvar PIX'}</Button>
+              </div>
             </div>
-          ))}
-        </div>
-      </CardContent></Card>
-      <div className="flex justify-end">
-        <Button onClick={() => onSave(local)} size="lg" className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar configuração</Button>
-      </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">Carregando configuração...</div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -1252,7 +1376,7 @@ function SettingsTab() {
         <CardContent className="p-6">
           <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Logo</h3>
           <div className="flex items-center gap-4">
-            <div className="h-20 w-20 overflow-hidden rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-lg shadow-amber-500/30">
+            <div className="h-20 w-20 overflow-hidden rounded-2xl bg-brand-gradient shadow-lg shadow-amber-500/30">
               {form.logoUrl ? (
                 <img src={form.logoUrl} alt="Logo" className="h-full w-full object-cover" />
               ) : (
@@ -1308,7 +1432,7 @@ function SettingsTab() {
         <CardContent className="p-6">
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-amber-400">Prévia</h3>
           <div className="flex items-center gap-3">
-            <div className="h-14 w-14 overflow-hidden rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600">
+            <div className="h-14 w-14 overflow-hidden rounded-2xl bg-brand-gradient">
               {form.logoUrl ? (
                 <img src={form.logoUrl} alt="" className="h-full w-full object-cover" />
               ) : (
@@ -1326,7 +1450,7 @@ function SettingsTab() {
       </Card>
 
       <div className="flex justify-end">
-        <Button disabled={saving || !form.restaurantName} onClick={save} size="lg" className="bg-gradient-to-r from-amber-500 to-orange-600">
+        <Button disabled={saving || !form.restaurantName} onClick={save} size="lg" className="bg-brand-gradient">
           {saving ? 'Salvando...' : 'Salvar alterações'}
         </Button>
       </div>
@@ -1417,6 +1541,233 @@ function FiltersBar({ filters, setFilters, tab, statuses }) {
           </div>
         </CardContent></Card>
       )}
+    </div>
+  )
+}
+
+// ============ Theme Tab ============
+function ThemeTab() {
+  const { theme, setTheme, refresh, resolvedMode } = useTheme()
+  const [local, setLocal] = useState(theme)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setLocal(theme) }, [theme])
+
+  const activePalette = local?.[resolvedMode] || local?.dark
+  const updatePalette = (key, value) => {
+    const mode = resolvedMode === 'light' ? 'light' : 'dark'
+    setLocal((prev) => {
+      const next = { ...prev, [mode]: { ...(prev[mode] || {}), [key]: value } }
+      setTheme(next) // apply live
+      return next
+    })
+  }
+  const updateBrand = (key, value) => {
+    setLocal((prev) => {
+      const next = { ...prev, brand: { ...(prev.brand || {}), [key]: value } }
+      setTheme(next)
+      return next
+    })
+  }
+  const updateMode = (v) => {
+    setLocal((prev) => {
+      const next = { ...prev, mode: v }
+      setTheme(next)
+      return next
+    })
+  }
+  const save = async () => {
+    setSaving(true)
+    try {
+      await apiFetch('/api/admin/theme', { method: 'PATCH', body: JSON.stringify({ mode: local.mode, brand: local.brand, dark: local.dark, light: local.light }) })
+      await refresh()
+      toast.success('Tema salvo e aplicado')
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+  const reset = () => {
+    const DEFAULTS = DEFAULT_THEME
+    setLocal(DEFAULTS)
+    setTheme(DEFAULTS)
+  }
+
+  const paletteFields = [
+    { key: 'background', label: 'Fundo' },
+    { key: 'foreground', label: 'Texto' },
+    { key: 'card', label: 'Card' },
+    { key: 'border', label: 'Borda' },
+    { key: 'primary', label: 'Primária' },
+    { key: 'primaryForeground', label: 'Texto primária' },
+    { key: 'secondary', label: 'Secundária' },
+    { key: 'secondaryForeground', label: 'Texto secundária' },
+    { key: 'accent', label: 'Destaque' },
+    { key: 'muted', label: 'Muted' },
+    { key: 'mutedForeground', label: 'Texto muted' },
+    { key: 'destructive', label: 'Destrutiva' },
+  ]
+
+  // Key contrast checks (text on background, primary on primary-fg)
+  const checks = [
+    { fg: activePalette?.foreground, bg: activePalette?.background, label: 'Texto × Fundo' },
+    { fg: activePalette?.primaryForeground, bg: activePalette?.primary, label: 'Texto primária × Primária' },
+    { fg: activePalette?.foreground, bg: activePalette?.card, label: 'Texto × Card' },
+    { fg: activePalette?.mutedForeground, bg: activePalette?.background, label: 'Muted × Fundo' },
+  ]
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold">🎨 Personalização do Tema</h2>
+          <p className="text-sm text-muted-foreground">Ajuste as cores do sistema. Alterações são aplicadas em tempo real — salve para persistir.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={reset} className="border-white/10">Restaurar padrão</Button>
+          <Button size="sm" onClick={save} disabled={saving} className="bg-brand-gradient">{saving ? 'Salvando...' : 'Salvar tema'}</Button>
+        </div>
+      </div>
+
+      {/* Mode selector */}
+      <Card className="border-white/10 bg-zinc-900/60">
+        <CardContent className="p-4">
+          <Label className="text-xs uppercase tracking-wide text-muted-foreground">Modo</Label>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {[
+              { v: 'light', label: 'Claro', Icon: Sun },
+              { v: 'dark', label: 'Escuro', Icon: Moon },
+              { v: 'auto', label: 'Automático', Icon: Monitor },
+            ].map(({ v, label, Icon }) => (
+              <button
+                key={v}
+                onClick={() => updateMode(v)}
+                className={`flex flex-col items-center gap-1 rounded-lg border p-3 text-sm transition ${local?.mode === v ? 'border-brand bg-brand-soft text-foreground' : 'border-white/10 hover:border-white/20 text-muted-foreground'}`}
+              >
+                <Icon className="h-5 w-5" />
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Modo efetivo agora: <Badge variant="outline" className="border-white/10">{resolvedMode}</Badge>
+            {local?.mode === 'auto' && ' (segue o sistema operacional do cliente)'}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Brand gradient */}
+      <Card className="border-white/10 bg-zinc-900/60">
+        <CardContent className="p-4">
+          <h3 className="mb-3 font-semibold">Gradiente da marca</h3>
+          <p className="mb-3 text-xs text-muted-foreground">Usado em botões de destaque, hero e elementos principais.</p>
+          <div className="grid gap-3 md:grid-cols-3">
+            <ColorField label="Cor inicial" value={local?.brand?.from} onChange={(v) => updateBrand('from', v)} />
+            <ColorField label="Cor final" value={local?.brand?.to} onChange={(v) => updateBrand('to', v)} />
+            <div className="flex items-end">
+              <div className="h-10 w-full rounded-lg bg-brand-gradient shadow-inner" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Palette editor + preview */}
+      <div className="grid gap-4 lg:grid-cols-[1fr,1fr]">
+        <Card className="border-white/10 bg-zinc-900/60">
+          <CardContent className="p-4">
+            <h3 className="mb-1 font-semibold">Paleta — Modo {resolvedMode === 'light' ? 'Claro' : 'Escuro'}</h3>
+            <p className="mb-3 text-xs text-muted-foreground">Edite clicando no quadrado ou digitando HEX.</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {paletteFields.map((f) => (
+                <ColorField key={f.key} label={f.label} value={activePalette?.[f.key]} onChange={(v) => updatePalette(f.key, v)} />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="space-y-4">
+          {/* Preview */}
+          <Card className="border-white/10 bg-zinc-900/60">
+            <CardContent className="p-4">
+              <h3 className="mb-3 font-semibold">Pré-visualização</h3>
+              <div className="space-y-3 rounded-xl border border-border bg-background p-4">
+                <div className="flex items-center gap-2">
+                  <div className="h-8 w-8 rounded-lg bg-brand-gradient" />
+                  <div>
+                    <div className="text-sm font-bold text-foreground">Sabor & Arte</div>
+                    <div className="text-[10px] text-muted-foreground">Restaurante</div>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-border bg-card p-3">
+                  <div className="text-sm font-semibold text-foreground">Burger Clássico</div>
+                  <div className="text-xs text-muted-foreground">Hambúrguer artesanal</div>
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="text-lg font-bold text-brand">R$ 38,90</span>
+                    <Button size="sm" className="bg-brand-gradient text-white">Adicionar</Button>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" className="bg-primary text-primary-foreground">Primária</Button>
+                  <Button size="sm" variant="secondary">Secundária</Button>
+                  <Button size="sm" variant="outline">Outline</Button>
+                  <Button size="sm" variant="destructive">Destrutiva</Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Contrast checks */}
+          <Card className="border-white/10 bg-zinc-900/60">
+            <CardContent className="p-4">
+              <h3 className="mb-2 font-semibold">Acessibilidade (WCAG)</h3>
+              <p className="mb-3 text-xs text-muted-foreground">Contraste mínimo recomendado: 4.5:1 (AA) para texto normal.</p>
+              <div className="space-y-2">
+                {checks.map((c, i) => {
+                  const ratio = contrastRatio(c.fg || '#000', c.bg || '#fff')
+                  const lbl = wcagLabel(ratio)
+                  return (
+                    <div key={i} className="flex items-center justify-between rounded-lg border border-white/5 bg-black/20 p-2 text-sm">
+                      <div className="flex items-center gap-2">
+                        <div className="flex">
+                          <span className="inline-block h-5 w-5 rounded-l border border-white/10" style={{ background: c.bg }} />
+                          <span className="inline-block h-5 w-5 rounded-r border-y border-r border-white/10" style={{ background: c.fg }} />
+                        </div>
+                        <span className="text-xs">{c.label}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs tabular-nums text-muted-foreground">{ratio.toFixed(2)}:1</span>
+                        <Badge variant="outline" className={`border-white/10 ${lbl.color}`}>{lbl.label}</Badge>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ColorField({ label, value, onChange }) {
+  const safe = (value || '#000000').toLowerCase()
+  return (
+    <div>
+      <Label className="text-xs">{label}</Label>
+      <div className="mt-1 flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5">
+        <input
+          type="color"
+          value={safe}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-7 w-9 cursor-pointer rounded border-0 bg-transparent p-0"
+          style={{ background: 'transparent' }}
+        />
+        <Input
+          value={safe}
+          onChange={(e) => {
+            const v = e.target.value
+            if (/^#?[0-9a-fA-F]{0,6}$/.test(v)) onChange(v.startsWith('#') ? v : '#' + v)
+          }}
+          className="h-7 border-0 bg-transparent p-0 font-mono text-xs uppercase"
+        />
+      </div>
     </div>
   )
 }

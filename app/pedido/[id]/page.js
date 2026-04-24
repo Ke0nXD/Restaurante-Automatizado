@@ -6,7 +6,8 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { ChefHat, ArrowLeft, Clock, Check, Utensils, Bike, MapPin, CreditCard } from 'lucide-react'
+import { ChefHat, ArrowLeft, Clock, Check, Utensils, Bike, MapPin, CreditCard, QrCode, Copy, CheckCircle2, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 
 const brl = (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
@@ -58,6 +59,10 @@ function OrderTrackingPage() {
         <Link href="/" className="mb-6 inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
           <ArrowLeft className="mr-1 h-4 w-4" /> Início
         </Link>
+
+        {order.type === 'delivery' && order.payment?.method === 'pix' && order.payment?.status === 'aguardando_pagamento' && order.pix && (
+          <PixCard order={order} />
+        )}
 
         <Card className="mb-4 border-white/10 bg-zinc-900/60">
           <CardContent className="p-6">
@@ -123,14 +128,89 @@ function OrderTrackingPage() {
               <p className="text-sm text-muted-foreground">{order.address.city} {order.address.complement && `· ${order.address.complement}`}</p>
               <div className="mt-3 flex items-center gap-2 text-sm">
                 <CreditCard className="h-4 w-4 text-muted-foreground" />
-                <span>{order.payment?.method}</span>
-                <Badge variant="outline" className="ml-auto text-xs">{order.payment?.status}</Badge>
+                <span>{methodLabel(order.payment?.method)}</span>
+                <Badge variant="outline" className="ml-auto text-xs">{paymentStatusLabel(order.payment?.status)}</Badge>
               </div>
             </CardContent>
           </Card>
         )}
       </div>
     </main>
+  )
+}
+
+function methodLabel(m) {
+  if (!m) return '—'
+  const map = { pix: 'PIX', card_delivery: 'Cartão na entrega', cash_delivery: 'Dinheiro na entrega' }
+  return map[m] || m
+}
+function paymentStatusLabel(s) {
+  const map = {
+    pago: '✅ Pago',
+    aguardando_pagamento: '⏳ Aguardando PIX',
+    pendente_entrega: '📦 Pagar na entrega',
+    expirado: '⌛ Expirado',
+    pendente: 'Pendente',
+  }
+  return map[s] || s || '—'
+}
+
+function PixCard({ order }) {
+  const [copied, setCopied] = useState(false)
+  const [secondsLeft, setSecondsLeft] = useState(() => {
+    const exp = order.pix?.expiresAt ? new Date(order.pix.expiresAt).getTime() : Date.now() + 15 * 60 * 1000
+    return Math.max(0, Math.floor((exp - Date.now()) / 1000))
+  })
+  useEffect(() => {
+    const iv = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(iv)
+  }, [])
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(order.pix?.copyPaste || '')
+      setCopied(true); toast.success('Código copiado!')
+      setTimeout(() => setCopied(false), 2000)
+    } catch {}
+  }
+  const mm = String(Math.floor(secondsLeft / 60)).padStart(2, '0')
+  const ss = String(secondsLeft % 60).padStart(2, '0')
+  return (
+    <Card className="mb-4 border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-orange-500/5">
+      <CardContent className="p-5">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <QrCode className="h-4 w-4 text-amber-400" />
+            <div className="text-sm font-semibold">Pague com PIX para confirmar</div>
+          </div>
+          <Badge variant="secondary" className="bg-black/40 font-mono text-amber-300">
+            <Loader2 className="mr-1 h-3 w-3 animate-spin" /> {mm}:{ss}
+          </Badge>
+        </div>
+        <div className="grid gap-4 md:grid-cols-[auto,1fr]">
+          <div className="mx-auto flex h-44 w-44 items-center justify-center rounded-xl bg-white p-2">
+            {order.pix?.qrDataUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={order.pix.qrDataUrl} alt="QR Code PIX" className="h-full w-full" />
+            )}
+          </div>
+          <div className="space-y-2">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">Valor</div>
+              <div className="text-xl font-bold text-amber-300">{brl(order.total)}</div>
+            </div>
+            <div>
+              <div className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Copia e cola</div>
+              <div className="flex gap-2">
+                <code className="line-clamp-2 flex-1 break-all rounded bg-black/40 p-2 text-[10px] text-muted-foreground">{order.pix?.copyPaste}</code>
+                <Button size="sm" variant="outline" onClick={copy} className="h-auto shrink-0 border-white/10">
+                  {copied ? <CheckCircle2 className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

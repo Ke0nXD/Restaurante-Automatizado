@@ -3,6 +3,7 @@ import { MongoClient } from 'mongodb'
 import { v4 as uuidv4 } from 'uuid'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import QRCode from 'qrcode'
 
 const MONGO_URL = process.env.MONGO_URL
 const DB_NAME = process.env.DB_NAME || 'restaurant_app'
@@ -116,17 +117,89 @@ async function ensureSeed(db) {
     // Migration: rename old 'admin' to 'owner_admin'
     await db.collection('users').updateMany({ role: 'admin' }, { $set: { role: 'owner_admin' } })
   }
-  // Seed payment methods config
+  // Seed payment methods config (with migration to new structure)
   const payCfg = await db.collection('settings').findOne({ id: 'payment-methods' })
+  const DEFAULT_DELIVERY_METHODS = [
+    { id: 'pix', label: 'PIX', active: true, online: true },
+    { id: 'card_delivery', label: 'Cartão na Entrega', active: true, online: false },
+    { id: 'cash_delivery', label: 'Dinheiro na Entrega', active: true, online: false },
+  ]
   if (!payCfg) {
     await db.collection('settings').insertOne({
       id: 'payment-methods',
-      deliveryMethods: [
-        { id: 'pix', label: 'PIX', active: true },
-        { id: 'credit_card', label: 'Cartão de Crédito', active: true },
-        { id: 'debit_card', label: 'Cartão de Débito', active: true },
-        { id: 'cash_on_delivery', label: 'Pagar com Dinheiro na Entrega', active: true },
-      ],
+      deliveryMethods: DEFAULT_DELIVERY_METHODS,
+      updatedAt: new Date().toISOString(),
+    })
+  } else {
+    // Migrate old method ids to new structure
+    const existing = payCfg.deliveryMethods || []
+    const hasOldIds = existing.some((m) => ['credit_card', 'debit_card', 'cash_on_delivery'].includes(m.id))
+    const missingNew = !existing.some((m) => m.id === 'card_delivery') || !existing.some((m) => m.id === 'cash_delivery')
+    if (hasOldIds || missingNew) {
+      await db.collection('settings').updateOne(
+        { id: 'payment-methods' },
+        { $set: { deliveryMethods: DEFAULT_DELIVERY_METHODS, updatedAt: new Date().toISOString() } }
+      )
+    }
+  }
+
+  // Seed theme settings
+  const themeDoc = await db.collection('settings').findOne({ id: 'theme' })
+  if (!themeDoc) {
+    await db.collection('settings').insertOne({
+      id: 'theme',
+      mode: 'dark', // 'light' | 'dark' | 'auto'
+      brand: {
+        from: '#f59e0b', // amber-500
+        to: '#ea580c',   // orange-600
+      },
+      dark: {
+        background: '#09090b',
+        foreground: '#fafafa',
+        card: '#18181b',
+        border: '#27272a',
+        primary: '#f59e0b',
+        primaryForeground: '#0a0a0a',
+        secondary: '#27272a',
+        secondaryForeground: '#fafafa',
+        accent: '#f59e0b',
+        muted: '#27272a',
+        mutedForeground: '#a1a1aa',
+        destructive: '#ef4444',
+      },
+      light: {
+        background: '#ffffff',
+        foreground: '#0a0a0a',
+        card: '#ffffff',
+        border: '#e5e7eb',
+        primary: '#f59e0b',
+        primaryForeground: '#ffffff',
+        secondary: '#f4f4f5',
+        secondaryForeground: '#0a0a0a',
+        accent: '#f59e0b',
+        muted: '#f4f4f5',
+        mutedForeground: '#71717a',
+        destructive: '#dc2626',
+      },
+      updatedAt: new Date().toISOString(),
+    })
+  }
+
+  // Seed PIX config (stub, ready for provider integration)
+  const pixCfg = await db.collection('settings').findOne({ id: 'pix-config' })
+  if (!pixCfg) {
+    await db.collection('settings').insertOne({
+      id: 'pix-config',
+      provider: 'stub', // 'stub' | 'mercadopago' | 'efi' | 'asaas'
+      environment: 'sandbox', // 'sandbox' | 'production'
+      apiKey: '',
+      clientId: '',
+      clientSecret: '',
+      webhookUrl: '',
+      pixKey: 'pagamento@sabor-arte.com.br',
+      merchantName: 'Sabor e Arte',
+      merchantCity: 'SAO PAULO',
+      expirationMinutes: 15,
       updatedAt: new Date().toISOString(),
     })
   }
@@ -136,6 +209,69 @@ function stripId(doc) {
   if (!doc) return doc
   const { _id, passwordHash, ...rest } = doc
   return rest
+}
+
+// ===== PIX helpers =====
+// Generates a BR Code (EMV QR Code) string for PIX static/dynamic payment.
+// This is a simplified version suitable for stub/testing. Real providers return their own.
+function buildPixBRCode({ pixKey, merchantName, merchantCity, amount, txid, description }) {
+  const sanitize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().slice(0, 25)
+  const tlv = (id, value) => `${id}${String(value.length).padStart(2, '0')}${value}`
+  const gui = tlv('00', 'br.gov.bcb.pix')
+  const key = tlv('01', pixKey || '')
+  const desc = description ? tlv('02', description.slice(0, 50)) : ''
+  const merchantAccountInfo = tlv('26', gui + key + desc)
+  const payload =
+    tlv('00', '01') +                              // Payload Format Indicator
+    tlv('01', '12') +                              // Point of initiation method: dynamic
+    merchantAccountInfo +                          // Merchant account info
+    tlv('52', '0000') +                            // Merchant Category Code
+    tlv('53', '986') +                             // Transaction currency (BRL)
+    tlv('54', amount.toFixed(2)) +                 // Transaction amount
+    tlv('58', 'BR') +                              // Country code
+    tlv('59', sanitize(merchantName)) +            // Merchant name
+    tlv('60', sanitize(merchantCity)) +            // Merchant city
+    tlv('62', tlv('05', (txid || '***').slice(0, 25))) + // Additional data (txid)
+    '6304'                                         // CRC placeholder
+  return payload + crc16(payload)
+}
+function crc16(str) {
+  let crc = 0xFFFF
+  for (let i = 0; i < str.length; i++) {
+    crc ^= str.charCodeAt(i) << 8
+    for (let j = 0; j < 8; j++) {
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1)
+      crc &= 0xFFFF
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0')
+}
+
+async function generatePixForOrder(db, order, amount) {
+  const cfg = await db.collection('settings').findOne({ id: 'pix-config' }) || {}
+  const txid = ('SA' + order.id.replace(/-/g, '')).slice(0, 25).toUpperCase()
+  const brCode = buildPixBRCode({
+    pixKey: cfg.pixKey || 'pagamento@sabor-arte.com.br',
+    merchantName: cfg.merchantName || 'Sabor e Arte',
+    merchantCity: cfg.merchantCity || 'SAO PAULO',
+    amount: Number(amount || 0),
+    txid,
+    description: `Pedido ${order.id.slice(0, 8)}`,
+  })
+  const qrDataUrl = await QRCode.toDataURL(brCode, { width: 360, margin: 1 })
+  const expiresInMin = Number(cfg.expirationMinutes || 15)
+  const expiresAt = new Date(Date.now() + expiresInMin * 60 * 1000).toISOString()
+  return {
+    provider: cfg.provider || 'stub',
+    brCode,
+    copyPaste: brCode,
+    qrDataUrl,
+    txid,
+    amount: Number(amount || 0),
+    createdAt: new Date().toISOString(),
+    expiresAt,
+    status: 'aguardando_pagamento', // pending
+  }
 }
 
 function getAuthUser(request) {
@@ -241,6 +377,24 @@ async function handleGet(request, pathParts) {
     return NextResponse.json(methods)
   }
 
+  if (resource === 'theme') {
+    const s = await db.collection('settings').findOne({ id: 'theme' })
+    if (!s) return NextResponse.json({ mode: 'dark' })
+    return NextResponse.json(stripId(s))
+  }
+
+  if (resource === 'pix-info') {
+    // Public read of non-secret pix info (for UI countdown etc.)
+    const s = await db.collection('settings').findOne({ id: 'pix-config' })
+    if (!s) return NextResponse.json({ expirationMinutes: 15 })
+    return NextResponse.json({
+      provider: s.provider,
+      environment: s.environment,
+      expirationMinutes: s.expirationMinutes,
+      merchantName: s.merchantName,
+    })
+  }
+
   if (resource === 'orders' && id) {
     const order = await db.collection('orders').findOne({ id })
     if (!order) return NextResponse.json({ error: 'Pedido não encontrado' }, { status: 404 })
@@ -341,6 +495,16 @@ async function handleGet(request, pathParts) {
       const s = await db.collection('settings').findOne({ id: 'payment-methods' })
       return NextResponse.json(s?.deliveryMethods || [])
     }
+    if (id === 'theme') {
+      const s = await db.collection('settings').findOne({ id: 'theme' })
+      return NextResponse.json(s ? stripId(s) : { mode: 'dark' })
+    }
+    if (id === 'pix-config') {
+      const ownerCheck = await requireOwner(request, db)
+      if (ownerCheck.error) return ownerCheck.error
+      const s = await db.collection('settings').findOne({ id: 'pix-config' })
+      return NextResponse.json(s ? stripId(s) : {})
+    }
     if (id === 'notifications') {
       // Get notifications targeted to current user's role, newest first, limit 50
       const me = guard.user
@@ -437,8 +601,8 @@ async function handlePost(request, pathParts) {
     return NextResponse.json({ token, user: stripId(user) })
   }
 
-  // Orders
-  if (resource === 'orders') {
+  // Orders (create)
+  if (resource === 'orders' && !id) {
     const body = await request.json()
     const { type, items, customer, table, address, payment, notes } = body
     const authed = getAuthUser(request)
@@ -510,7 +674,34 @@ async function handlePost(request, pathParts) {
     } else {
       if (!address?.street) return NextResponse.json({ error: 'Endereço obrigatório' }, { status: 400 })
       order.address = address
-      order.payment = { method: payment?.method || 'Pix', status: 'Pendente' }
+      // Normalize payment method for delivery: 'pix' | 'card_delivery' | 'cash_delivery'
+      const rawMethod = (payment?.method || 'pix').toLowerCase()
+      const methodMap = {
+        pix: 'pix',
+        pagar_pix: 'pix',
+        cartao: 'card_delivery',
+        cartão: 'card_delivery',
+        card_delivery: 'card_delivery',
+        credit_card: 'card_delivery',
+        debit_card: 'card_delivery',
+        dinheiro: 'cash_delivery',
+        cash_delivery: 'cash_delivery',
+        cash_on_delivery: 'cash_delivery',
+      }
+      const normalizedMethod = methodMap[rawMethod] || 'pix'
+      if (normalizedMethod === 'pix') {
+        order.payment = { method: 'pix', status: 'aguardando_pagamento' }
+        try {
+          order.pix = await generatePixForOrder(db, { id: order.id }, total)
+          order.payment.txid = order.pix.txid
+          order.payment.expiresAt = order.pix.expiresAt
+        } catch (e) {
+          console.error('PIX generation error:', e)
+        }
+      } else {
+        // Card / cash on delivery → payment stays pending until delivered
+        order.payment = { method: normalizedMethod, status: 'pendente_entrega' }
+      }
     }
     await db.collection('orders').insertOne(order)
 
@@ -554,6 +745,85 @@ async function handlePost(request, pathParts) {
       targetRoles: ['owner_admin', 'admin', 'attendant'],
     })
     return NextResponse.json(stripId(updated))
+  }
+
+  // PIX: regenerate / refresh payment for a delivery order
+  if (resource === 'orders' && id && pathParts[2] === 'pix-regenerate') {
+    const order = await db.collection('orders').findOne({ id })
+    if (!order) return NextResponse.json({ error: 'Pedido não encontrado' }, { status: 404 })
+    if (order.type !== 'delivery' || order.payment?.method !== 'pix') {
+      return NextResponse.json({ error: 'Pedido não é PIX' }, { status: 400 })
+    }
+    if (order.payment?.status === 'pago') {
+      return NextResponse.json({ error: 'Pedido já foi pago' }, { status: 400 })
+    }
+    const pix = await generatePixForOrder(db, order, order.total)
+    await db.collection('orders').updateOne(
+      { id },
+      { $set: { pix, 'payment.status': 'aguardando_pagamento', 'payment.txid': pix.txid, 'payment.expiresAt': pix.expiresAt } }
+    )
+    const updated = await db.collection('orders').findOne({ id })
+    return NextResponse.json(stripId(updated))
+  }
+
+  // PIX: simulate confirmation (stub / admin manual / webhook)
+  // In production this would be triggered by provider webhook + signature verification.
+  if (resource === 'orders' && id && pathParts[2] === 'pix-confirm') {
+    const body = await request.json().catch(() => ({}))
+    const order = await db.collection('orders').findOne({ id })
+    if (!order) return NextResponse.json({ error: 'Pedido não encontrado' }, { status: 404 })
+    // For admin-triggered confirmation we require admin auth. Webhook calls use a shared secret in body.provider_token (stub skips).
+    const authed = getAuthUser(request)
+    const isAdmin = authed && ['owner_admin', 'admin', 'attendant'].includes(authed.role)
+    const isStubWebhook = body.source === 'webhook' && body.provider_token === 'stub'
+    if (!isAdmin && !isStubWebhook) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+    }
+    if (order.payment?.method !== 'pix') {
+      return NextResponse.json({ error: 'Pedido não é PIX' }, { status: 400 })
+    }
+    const paidAt = new Date().toISOString()
+    await db.collection('orders').updateOne(
+      { id },
+      { $set: {
+          'payment.status': 'pago',
+          'payment.paidAt': paidAt,
+          'payment.confirmedBy': isAdmin ? (authed.email || authed.id) : 'webhook:stub',
+          'pix.status': 'pago',
+          // Promote order from "aguardando_pagamento" → "Confirmado" if applicable
+          ...(order.status === 'Aguardando pagamento' || order.status === 'Recebido' ? { status: 'Confirmado' } : {}),
+        },
+        $push: { statusHistory: { status: 'Pagamento PIX confirmado', at: paidAt } },
+      }
+    )
+    await createNotification(db, {
+      type: 'payment_confirmed',
+      referenceId: id,
+      title: `✅ Pagamento PIX confirmado`,
+      message: `Pedido de ${order.customer?.name || 'cliente'} · ${(order.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`,
+      targetRoles: ['owner_admin', 'admin', 'attendant', 'delivery_driver'],
+    })
+    const updated = await db.collection('orders').findOne({ id })
+    return NextResponse.json(stripId(updated))
+  }
+
+  // PIX: status check (polling from customer tracking page)
+  if (resource === 'orders' && id && pathParts[2] === 'pix-status') {
+    const order = await db.collection('orders').findOne({ id })
+    if (!order) return NextResponse.json({ error: 'Pedido não encontrado' }, { status: 404 })
+    // Auto-expire if past expiresAt and still pending
+    if (order.pix?.expiresAt && order.payment?.status === 'aguardando_pagamento' && new Date(order.pix.expiresAt) < new Date()) {
+      await db.collection('orders').updateOne(
+        { id },
+        { $set: { 'payment.status': 'expirado', 'pix.status': 'expirado' } }
+      )
+      return NextResponse.json({ status: 'expirado', paymentStatus: 'expirado' })
+    }
+    return NextResponse.json({
+      status: order.pix?.status || order.payment?.status,
+      paymentStatus: order.payment?.status,
+      orderStatus: order.status,
+    })
   }
 
   // Admin create
@@ -781,6 +1051,26 @@ async function handlePatch(request, pathParts) {
       if (Array.isArray(body.deliveryMethods)) updates.deliveryMethods = body.deliveryMethods
       await db.collection('settings').updateOne({ id: 'payment-methods' }, { $set: updates }, { upsert: true })
       const updated = await db.collection('settings').findOne({ id: 'payment-methods' })
+      return NextResponse.json(stripId(updated))
+    }
+    if (id === 'theme') {
+      const updates = { updatedAt: new Date().toISOString() }
+      for (const k of ['mode', 'brand', 'dark', 'light']) {
+        if (body[k] !== undefined) updates[k] = body[k]
+      }
+      await db.collection('settings').updateOne({ id: 'theme' }, { $set: updates }, { upsert: true })
+      const updated = await db.collection('settings').findOne({ id: 'theme' })
+      return NextResponse.json(stripId(updated))
+    }
+    if (id === 'pix-config') {
+      const ownerCheck = await requireOwner(request, db)
+      if (ownerCheck.error) return ownerCheck.error
+      const updates = { updatedAt: new Date().toISOString() }
+      for (const k of ['provider', 'environment', 'apiKey', 'clientId', 'clientSecret', 'webhookUrl', 'pixKey', 'merchantName', 'merchantCity', 'expirationMinutes']) {
+        if (body[k] !== undefined) updates[k] = body[k]
+      }
+      await db.collection('settings').updateOne({ id: 'pix-config' }, { $set: updates }, { upsert: true })
+      const updated = await db.collection('settings').findOne({ id: 'pix-config' })
       return NextResponse.json(stripId(updated))
     }
     if (id === 'users' && targetId) {

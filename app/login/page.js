@@ -94,7 +94,7 @@ function LoginPage() {
                   <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
                 </div>
               </TabsContent>
-              <Button disabled={loading} onClick={submit} className="mt-6 w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:opacity-90">
+              <Button disabled={loading} onClick={submit} className="mt-6 w-full bg-brand-gradient hover:opacity-90">
                 {loading ? 'Aguarde...' : tab === 'login' ? 'Entrar' : 'Criar conta'}
               </Button>
             </Tabs>

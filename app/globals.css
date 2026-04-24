@@ -139,3 +139,21 @@ code {
     @apply bg-background text-foreground;
     }
 }
+
+@layer utilities {
+  .bg-brand-gradient {
+    background-image: linear-gradient(to right, var(--brand-from, #f59e0b), var(--brand-to, #ea580c));
+  }
+  .text-brand {
+    color: var(--brand-primary, #f59e0b);
+  }
+  .border-brand {
+    border-color: var(--brand-primary, #f59e0b);
+  }
+  .ring-brand {
+    --tw-ring-color: var(--brand-primary, #f59e0b);
+  }
+  .bg-brand-soft {
+    background-color: color-mix(in srgb, var(--brand-primary, #f59e0b) 15%, transparent);
+  }
+}
