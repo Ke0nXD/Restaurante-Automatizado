@@ -395,6 +395,25 @@ async function handleGet(request, pathParts) {
     })
   }
 
+  // PIX: status check (polling from customer tracking page) - GET handler
+  if (resource === 'orders' && id && pathParts[2] === 'pix-status') {
+    const order = await db.collection('orders').findOne({ id })
+    if (!order) return NextResponse.json({ error: 'Pedido não encontrado' }, { status: 404 })
+    // Auto-expire if past expiresAt and still pending
+    if (order.pix?.expiresAt && order.payment?.status === 'aguardando_pagamento' && new Date(order.pix.expiresAt) < new Date()) {
+      await db.collection('orders').updateOne(
+        { id },
+        { $set: { 'payment.status': 'expirado', 'pix.status': 'expirado' } }
+      )
+      return NextResponse.json({ status: 'expirado', paymentStatus: 'expirado', orderStatus: order.status })
+    }
+    return NextResponse.json({
+      status: order.pix?.status || order.payment?.status,
+      paymentStatus: order.payment?.status,
+      orderStatus: order.status,
+    })
+  }
+
   if (resource === 'orders' && id) {
     const order = await db.collection('orders').findOne({ id })
     if (!order) return NextResponse.json({ error: 'Pedido não encontrado' }, { status: 404 })
