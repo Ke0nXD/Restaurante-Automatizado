@@ -90,6 +90,17 @@ async function ensureSeed(db) {
       { $set: { featured: true, featuredOrder: 1 } }
     )
   }
+  // Seed branding settings
+  const settings = await db.collection('settings').findOne({ id: 'branding' })
+  if (!settings) {
+    await db.collection('settings').insertOne({
+      id: 'branding',
+      restaurantName: 'Sabor & Arte',
+      slogan: 'gastronomia autoral',
+      logoUrl: '', // empty = use default ChefHat icon
+      updatedAt: new Date().toISOString(),
+    })
+  }
   // Seed default admin
   const adminExists = await db.collection('users').findOne({ email: 'admin@sabor.com' })
   if (!adminExists) {
@@ -167,6 +178,11 @@ async function handleGet(request, pathParts) {
   if (resource === 'promotions') {
     const promos = await db.collection('promotions').find({ active: true }).sort({ order: 1 }).toArray()
     return NextResponse.json(promos.map(stripId))
+  }
+
+  if (resource === 'settings') {
+    const s = await db.collection('settings').findOne({ id: 'branding' })
+    return NextResponse.json(s ? stripId(s) : { restaurantName: 'Sabor & Arte', slogan: '', logoUrl: '' })
   }
 
   if (resource === 'orders' && id) {
@@ -567,6 +583,15 @@ async function handlePatch(request, pathParts) {
       }
       await db.collection('promotions').updateOne({ id: targetId }, { $set: updates })
       const updated = await db.collection('promotions').findOne({ id: targetId })
+      return NextResponse.json(stripId(updated))
+    }
+    if (id === 'settings') {
+      const updates = { updatedAt: new Date().toISOString() }
+      for (const k of ['restaurantName', 'slogan', 'logoUrl']) {
+        if (body[k] !== undefined) updates[k] = body[k]
+      }
+      await db.collection('settings').updateOne({ id: 'branding' }, { $set: updates }, { upsert: true })
+      const updated = await db.collection('settings').findOne({ id: 'branding' })
       return NextResponse.json(stripId(updated))
     }
     if (id === 'comandas' && targetId) {

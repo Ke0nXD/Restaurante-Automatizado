@@ -11,9 +11,11 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { toast } from 'sonner'
 import { ChefHat, ArrowLeft } from 'lucide-react'
 import { setAuth } from '@/lib/auth'
+import { useBranding, BrandLogo } from '@/lib/branding'
 
 function LoginPage() {
   const router = useRouter()
+  const branding = useBranding()
   const [tab, setTab] = useState('login')
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({ email: '', password: '', name: '' })
@@ -51,11 +53,9 @@ function LoginPage() {
           <ArrowLeft className="mr-1 h-4 w-4" /> Voltar
         </Link>
         <div className="mb-8 flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600">
-            <ChefHat className="h-6 w-6 text-white" />
-          </div>
+          <BrandLogo size="md" />
           <div>
-            <h1 className="text-2xl font-bold">Sabor & Arte</h1>
+            <h1 className="text-2xl font-bold">{branding.restaurantName}</h1>
             <p className="text-xs uppercase tracking-widest text-amber-400">acesso ao sistema</p>
           </div>
         </div>

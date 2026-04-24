@@ -23,10 +23,12 @@ import {
   User, LogIn, LogOut, LayoutDashboard, Eye,
 } from 'lucide-react'
 import { getUser, getToken, clearAuth, authHeaders } from '@/lib/auth'
+import { useBranding, BrandLogo } from '@/lib/branding'
 
 const brl = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
 function App() {
+  const branding = useBranding()
   const [view, setView] = useState('welcome')
   const [orderType, setOrderType] = useState(null)
   const [products, setProducts] = useState([])
@@ -259,12 +261,10 @@ function App() {
 
         <div className="relative mx-auto flex min-h-screen max-w-5xl flex-col items-center justify-center px-6 py-12">
           <div className="mb-10 flex items-center gap-3">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-lg shadow-amber-500/30">
-              <ChefHat className="h-7 w-7 text-white" />
-            </div>
+            <BrandLogo size="lg" />
             <div>
-              <h1 className="text-3xl font-bold tracking-tight">Sabor & Arte</h1>
-              <p className="text-xs uppercase tracking-[0.25em] text-amber-400/80">gastronomia autoral</p>
+              <h1 className="text-3xl font-bold tracking-tight">{branding.restaurantName}</h1>
+              {branding.slogan && <p className="text-xs uppercase tracking-[0.25em] text-amber-400/80">{branding.slogan}</p>}
             </div>
           </div>
 
@@ -443,11 +443,9 @@ function App() {
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600">
-              <ChefHat className="h-5 w-5 text-white" />
-            </div>
+            <BrandLogo size="sm" />
             <div className="leading-tight">
-              <div className="text-sm font-bold">Sabor & Arte</div>
+              <div className="text-sm font-bold">{branding.restaurantName}</div>
               <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-amber-400">
                 {orderType === 'local' ? <><Utensils className="h-2.5 w-2.5" /> No Local</> : <><Bike className="h-2.5 w-2.5" /> Delivery</>}
               </div>

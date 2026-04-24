@@ -20,9 +20,10 @@ import {
   ChefHat, LogOut, LayoutDashboard, Utensils, Bike, ClipboardList, Package,
   Tag, Users, Plus, Pencil, Trash2, Clock, Check, TrendingUp, DollarSign, ShoppingBag,
   Bell, CreditCard, Banknote, QrCode, CheckCircle2, Search, Menu, X, Calendar,
-  Sparkles, Image as ImageIcon, Star, Flame,
+  Sparkles, Image as ImageIcon, Star, Flame, Settings, Upload,
 } from 'lucide-react'
 import { apiFetch, getUser, clearAuth, getToken } from '@/lib/auth'
+import { refreshBranding, BrandLogo, useBranding } from '@/lib/branding'
 
 const brl = (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const LOCAL_STATUSES = ['Recebido', 'Em preparo', 'Pronto', 'Entregue', 'Finalizado']
@@ -42,11 +43,13 @@ const TABS = [
   { value: 'products', label: 'Produtos', Icon: Package },
   { value: 'categories', label: 'Categorias', Icon: Tag },
   { value: 'content', label: 'Conteúdo', Icon: Sparkles },
+  { value: 'settings', label: 'Configurações', Icon: Settings },
   { value: 'users', label: 'Clientes', Icon: Users },
 ]
 
 function AdminPage() {
   const router = useRouter()
+  const branding = useBranding()
   const [user, setUser] = useState(null)
   const [tab, setTab] = useState('dashboard')
   const [stats, setStats] = useState(null)
@@ -301,15 +304,15 @@ function AdminPage() {
               </SheetTrigger>
               <SheetContent side="left" className="w-72 border-white/10 bg-zinc-950 p-4">
                 <div className="mb-4 flex items-center gap-2">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600"><ChefHat className="h-5 w-5 text-white" /></div>
-                  <div><div className="text-sm font-bold">Sabor & Arte</div><div className="text-[10px] uppercase tracking-wider text-amber-400">Admin</div></div>
+                  <BrandLogo size="sm" />
+                  <div><div className="text-sm font-bold">{branding.restaurantName}</div><div className="text-[10px] uppercase tracking-wider text-amber-400">Admin</div></div>
                 </div>
                 <NavList onSelect={() => setMenuOpen(false)} />
               </SheetContent>
             </Sheet>
             <Link href="/" className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600"><ChefHat className="h-5 w-5 text-white" /></div>
-              <div className="leading-tight"><div className="text-sm font-bold">Sabor & Arte</div><div className="text-[10px] uppercase tracking-wider text-amber-400">Admin</div></div>
+              <BrandLogo size="sm" />
+              <div className="leading-tight"><div className="text-sm font-bold">{branding.restaurantName}</div><div className="text-[10px] uppercase tracking-wider text-amber-400">Admin</div></div>
             </Link>
           </div>
           <div className="flex items-center gap-2">
@@ -375,6 +378,7 @@ function AdminPage() {
             <CategoriesTab categories={categories} onEdit={setEditCategory} onDelete={deleteCategory} onNew={() => setEditCategory({ name: '', icon: '🍽️', order: categories.length + 1 })} />
           )}
           {tab === 'users' && <UsersTab users={users} orders={orders} />}
+          {tab === 'settings' && <SettingsTab />}
           {tab === 'content' && (
             <ContentTab
               banners={banners} promotions={promotions} products={products}
@@ -788,6 +792,138 @@ function UsersTab({ users, orders }) {
 function StatCard({ icon, label, value, color }) {
   const c = { amber: 'from-amber-500/20 to-amber-600/5 border-amber-500/20 text-amber-400', emerald: 'from-emerald-500/20 to-emerald-600/5 border-emerald-500/20 text-emerald-400', orange: 'from-orange-500/20 to-orange-600/5 border-orange-500/20 text-orange-400', purple: 'from-purple-500/20 to-purple-600/5 border-purple-500/20 text-purple-400' }[color]
   return <Card className={`border bg-gradient-to-br ${c}`}><CardContent className="p-4 sm:p-5"><div className="mb-2 h-6 w-6 sm:h-8 sm:w-8">{icon}</div><div className="text-[10px] uppercase tracking-wider text-muted-foreground sm:text-xs">{label}</div><div className="mt-1 text-lg font-bold sm:text-2xl">{value}</div></CardContent></Card>
+}
+
+function SettingsTab() {
+  const current = useBranding()
+  const [form, setForm] = useState({ restaurantName: '', slogan: '', logoUrl: '' })
+  const [saving, setSaving] = useState(false)
+  const [loadedFromServer, setLoadedFromServer] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/settings').then((r) => r.json()).then((d) => {
+      setForm({ restaurantName: d.restaurantName || '', slogan: d.slogan || '', logoUrl: d.logoUrl || '' })
+      setLoadedFromServer(true)
+    })
+  }, [])
+
+  const handleLogoUpload = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('Imagem muito grande (máx 2MB)')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      setForm({ ...form, logoUrl: ev.target.result })
+      toast.info('Logo carregada — clique em Salvar para aplicar')
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await apiFetch('/api/admin/settings', { method: 'PATCH', body: JSON.stringify(form) })
+      await refreshBranding()
+      toast.success('Configurações salvas! Alterações aplicadas em todo o sistema.')
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  const removeLogo = () => setForm({ ...form, logoUrl: '' })
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold">Identidade da Marca</h2>
+        <p className="text-sm text-muted-foreground">Personalize o nome, slogan e logo do seu restaurante. As alterações são refletidas em todo o sistema imediatamente.</p>
+      </div>
+
+      <Card className="border-white/10 bg-zinc-900/60">
+        <CardContent className="p-6">
+          <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Logo</h3>
+          <div className="flex items-center gap-4">
+            <div className="h-20 w-20 overflow-hidden rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-lg shadow-amber-500/30">
+              {form.logoUrl ? (
+                <img src={form.logoUrl} alt="Logo" className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center">
+                  <ChefHat className="h-10 w-10 text-white" />
+                </div>
+              )}
+            </div>
+            <div className="flex-1 space-y-2">
+              <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium transition hover:bg-white/10">
+                <Upload className="h-4 w-4" />
+                {form.logoUrl ? 'Substituir logo' : 'Enviar logo'}
+                <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+              </label>
+              {form.logoUrl && (
+                <Button variant="ghost" size="sm" onClick={removeLogo} className="text-red-400 hover:text-red-300">
+                  <Trash2 className="mr-1 h-3 w-3" /> Remover logo
+                </Button>
+              )}
+              <p className="text-xs text-muted-foreground">PNG ou JPG · até 2MB · idealmente quadrada</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-white/10 bg-zinc-900/60">
+        <CardContent className="p-6 space-y-4">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Informações</h3>
+          <div>
+            <Label>Nome do restaurante *</Label>
+            <Input
+              value={form.restaurantName}
+              onChange={(e) => setForm({ ...form, restaurantName: e.target.value })}
+              placeholder="Ex.: Sabor & Arte"
+              className="mt-1 border-white/10 bg-white/5"
+            />
+          </div>
+          <div>
+            <Label>Slogan (opcional)</Label>
+            <Input
+              value={form.slogan}
+              onChange={(e) => setForm({ ...form, slogan: e.target.value })}
+              placeholder="Ex.: gastronomia autoral"
+              className="mt-1 border-white/10 bg-white/5"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">Se deixar vazio, o slogan não será exibido.</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Preview */}
+      <Card className="border-amber-500/30 bg-amber-500/5">
+        <CardContent className="p-6">
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-amber-400">Prévia</h3>
+          <div className="flex items-center gap-3">
+            <div className="h-14 w-14 overflow-hidden rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600">
+              {form.logoUrl ? (
+                <img src={form.logoUrl} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center">
+                  <ChefHat className="h-7 w-7 text-white" />
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="text-2xl font-bold">{form.restaurantName || 'Nome do restaurante'}</div>
+              {form.slogan && <div className="text-xs uppercase tracking-[0.2em] text-amber-400">{form.slogan}</div>}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex justify-end">
+        <Button disabled={saving || !form.restaurantName} onClick={save} size="lg" className="bg-gradient-to-r from-amber-500 to-orange-600">
+          {saving ? 'Salvando...' : 'Salvar alterações'}
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 export default AdminPage
