@@ -56,6 +56,7 @@ function App() {
   const [banner, setBanner] = useState(null)
   const [promotions, setPromotions] = useState([])
   const [featured, setFeatured] = useState([])
+  const [paymentMethods, setPaymentMethods] = useState([])
   const [showLoginGate, setShowLoginGate] = useState(false)
   const [pendingAdd, setPendingAdd] = useState(null)
   const router = useRouter()
@@ -88,18 +89,22 @@ function App() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [pRes, cRes, bRes, promoRes, fRes] = await Promise.all([
+        const [pRes, cRes, bRes, promoRes, fRes, pmRes] = await Promise.all([
           fetch('/api/products'),
           fetch('/api/categories'),
           fetch('/api/banner'),
           fetch('/api/promotions'),
           fetch('/api/products?featured=1'),
+          fetch('/api/payment-methods'),
         ])
         setProducts(await pRes.json())
         setCategories(await cRes.json())
         setBanner(await bRes.json())
         setPromotions(await promoRes.json())
         setFeatured(await fRes.json())
+        const pm = await pmRes.json()
+        setPaymentMethods(pm)
+        if (pm.length > 0) setPaymentMethod(pm[0].label)
       } catch (e) {
         toast.error('Erro ao carregar cardápio')
       } finally {
@@ -239,7 +244,7 @@ function App() {
         <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
           {authUser ? (
             <>
-              {authUser.role === 'admin' && (
+              {['owner_admin', 'admin', 'attendant', 'delivery_driver'].includes(authUser.role) && (
                 <Link href="/admin">
                   <Button variant="outline" size="sm" className="border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">
                     <LayoutDashboard className="mr-1 h-4 w-4" /> Admin
@@ -573,6 +578,7 @@ function App() {
           setAddress={setAddress}
           paymentMethod={paymentMethod}
           setPaymentMethod={setPaymentMethod}
+          paymentMethods={paymentMethods}
           cart={cart}
           cartTotal={cartTotal}
           submitting={submitting}
@@ -804,7 +810,7 @@ function ProductCard({ product, onOpen, onAdd }) {
 function CheckoutView({
   orderType, checkoutStep, setCheckoutStep, tableNumber, setTableNumber,
   customer, setCustomer, address, setAddress, paymentMethod, setPaymentMethod,
-  cart, cartTotal, submitting, onSubmit, onBack,
+  paymentMethods, cart, cartTotal, submitting, onSubmit, onBack,
 }) {
   const canSubmitLocal = tableNumber && cart.length > 0
   const canGoPayment = address.street && address.number && address.district && address.city && customer.name && customer.phone
@@ -914,9 +920,27 @@ function CheckoutView({
                 </div>
               </div>
               <RadioGroup value={paymentMethod} onValueChange={setPaymentMethod} className="space-y-2">
-                <PaymentOption value="Pix" label="Pix" description="Pague com QR Code na confirmação" icon={<QrCode className="h-5 w-5" />} current={paymentMethod} />
-                <PaymentOption value="Dinheiro" label="Dinheiro" description="Pagamento na entrega" icon={<Banknote className="h-5 w-5" />} current={paymentMethod} />
-                <PaymentOption value="Cartão na entrega" label="Cartão na entrega" description="Débito ou crédito na maquininha" icon={<CreditCard className="h-5 w-5" />} current={paymentMethod} />
+                {(paymentMethods || []).length === 0 ? (
+                  <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-4 text-sm text-red-300">
+                    ⚠️ Nenhum método de pagamento disponível. Entre em contato com o restaurante.
+                  </div>
+                ) : (
+                  paymentMethods.map((m) => {
+                    const icons = {
+                      pix: <QrCode className="h-5 w-5" />,
+                      credit_card: <CreditCard className="h-5 w-5" />,
+                      debit_card: <CreditCard className="h-5 w-5" />,
+                      cash_on_delivery: <Banknote className="h-5 w-5" />,
+                    }
+                    const descs = {
+                      pix: 'Pague com QR Code na confirmação',
+                      credit_card: 'Cartão de crédito na maquininha',
+                      debit_card: 'Cartão de débito na maquininha',
+                      cash_on_delivery: 'Pagamento em dinheiro na entrega',
+                    }
+                    return <PaymentOption key={m.id} value={m.label} label={m.label} description={descs[m.id] || ''} icon={icons[m.id] || <CreditCard className="h-5 w-5" />} current={paymentMethod} />
+                  })
+                )}
               </RadioGroup>
               <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-300">
                 💡 Pagamento simulado nesta versão — pedido será registrado como &ldquo;Pendente&rdquo;.

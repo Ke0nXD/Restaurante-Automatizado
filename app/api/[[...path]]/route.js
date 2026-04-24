@@ -109,8 +109,25 @@ async function ensureSeed(db) {
       email: 'admin@sabor.com',
       name: 'Administrador',
       passwordHash: bcrypt.hashSync('admin123', 8),
-      role: 'admin',
+      role: 'owner_admin',
       createdAt: new Date().toISOString(),
+    })
+  } else if (adminExists.role === 'admin') {
+    // Migration: rename old 'admin' to 'owner_admin'
+    await db.collection('users').updateMany({ role: 'admin' }, { $set: { role: 'owner_admin' } })
+  }
+  // Seed payment methods config
+  const payCfg = await db.collection('settings').findOne({ id: 'payment-methods' })
+  if (!payCfg) {
+    await db.collection('settings').insertOne({
+      id: 'payment-methods',
+      deliveryMethods: [
+        { id: 'pix', label: 'PIX', active: true },
+        { id: 'credit_card', label: 'Cartão de Crédito', active: true },
+        { id: 'debit_card', label: 'Cartão de Débito', active: true },
+        { id: 'cash_on_delivery', label: 'Pagar com Dinheiro na Entrega', active: true },
+      ],
+      updatedAt: new Date().toISOString(),
     })
   }
 }
@@ -136,10 +153,28 @@ async function requireAdmin(request, db) {
   const user = getAuthUser(request)
   if (!user) return { error: NextResponse.json({ error: 'Não autenticado' }, { status: 401 }) }
   const dbUser = await db.collection('users').findOne({ id: user.id })
-  if (!dbUser || dbUser.role !== 'admin') {
+  if (!dbUser || !['owner_admin', 'admin', 'attendant', 'delivery_driver'].includes(dbUser.role)) {
     return { error: NextResponse.json({ error: 'Acesso negado' }, { status: 403 }) }
   }
   return { user: dbUser }
+}
+
+async function requireOwner(request, db) {
+  const res = await requireAdmin(request, db)
+  if (res.error) return res
+  if (!['owner_admin', 'admin'].includes(res.user.role)) {
+    return { error: NextResponse.json({ error: 'Apenas Admin Dono pode realizar esta ação' }, { status: 403 }) }
+  }
+  return res
+}
+
+async function requireStaff(request, db, allowedRoles) {
+  const res = await requireAdmin(request, db)
+  if (res.error) return res
+  if (allowedRoles && !allowedRoles.includes(res.user.role) && !['owner_admin', 'admin'].includes(res.user.role)) {
+    return { error: NextResponse.json({ error: 'Acesso negado para este papel' }, { status: 403 }) }
+  }
+  return res
 }
 
 // ---- Valid statuses ----
@@ -185,6 +220,12 @@ async function handleGet(request, pathParts) {
     return NextResponse.json(s ? stripId(s) : { restaurantName: 'Sabor & Arte', slogan: '', logoUrl: '' })
   }
 
+  if (resource === 'payment-methods') {
+    const s = await db.collection('settings').findOne({ id: 'payment-methods' })
+    const methods = (s?.deliveryMethods || []).filter((m) => m.active)
+    return NextResponse.json(methods)
+  }
+
   if (resource === 'orders' && id) {
     const order = await db.collection('orders').findOne({ id })
     if (!order) return NextResponse.json({ error: 'Pedido não encontrado' }, { status: 404 })
@@ -222,9 +263,32 @@ async function handleGet(request, pathParts) {
       const url = new URL(request.url)
       const type = url.searchParams.get('type')
       const search = (url.searchParams.get('search') || '').trim()
+      const status = url.searchParams.get('status')
+      const minValue = Number(url.searchParams.get('minValue')) || 0
+      const maxValue = Number(url.searchParams.get('maxValue')) || 0
+      const table = url.searchParams.get('table')
+      const address = (url.searchParams.get('address') || '').trim()
+      const dateFrom = url.searchParams.get('dateFrom')
+      const dateTo = url.searchParams.get('dateTo')
+      const payStatus = url.searchParams.get('paymentStatus')
+      const payMethod = url.searchParams.get('paymentMethod')
+      const deliveryStatus = url.searchParams.get('deliveryStatus')
+      const history = url.searchParams.get('history')
       const q = {}
       if (type) q.type = type
       if (search) q['customer.name'] = { $regex: search, $options: 'i' }
+      if (status) q.status = status
+      if (minValue) q.total = { ...(q.total || {}), $gte: minValue }
+      if (maxValue) q.total = { ...(q.total || {}), $lte: maxValue }
+      if (table) q.table = String(table)
+      if (address) q['address.street'] = { $regex: address, $options: 'i' }
+      if (dateFrom) q.createdAt = { ...(q.createdAt || {}), $gte: new Date(dateFrom).toISOString() }
+      if (dateTo) q.createdAt = { ...(q.createdAt || {}), $lte: new Date(dateTo + 'T23:59:59').toISOString() }
+      if (payStatus) q['payment.status'] = payStatus
+      if (payMethod) q['payment.method'] = payMethod
+      if (deliveryStatus) q['delivery.status'] = deliveryStatus
+      if (history === '1') q.status = 'Finalizado'
+      else if (history === '0') q.status = { $ne: 'Finalizado' }
       const orders = await db.collection('orders').find(q).sort({ createdAt: -1 }).toArray()
       return NextResponse.json(orders.map(stripId))
     }
@@ -258,6 +322,10 @@ async function handleGet(request, pathParts) {
       const users = await db.collection('users').find({}).toArray()
       return NextResponse.json(users.map(stripId))
     }
+    if (id === 'payment-methods') {
+      const s = await db.collection('settings').findOne({ id: 'payment-methods' })
+      return NextResponse.json(s?.deliveryMethods || [])
+    }
     if (id === 'banners') {
       const banners = await db.collection('banners').find({}).toArray()
       return NextResponse.json(banners.map(stripId))
@@ -267,6 +335,8 @@ async function handleGet(request, pathParts) {
       return NextResponse.json(promos.map(stripId))
     }
     if (id === 'stats') {
+      const owner = await requireOwner(request, db)
+      if (owner.error) return owner.error
       const now = new Date()
       const startDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
       const startMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
@@ -503,6 +573,25 @@ async function handlePost(request, pathParts) {
       await db.collection('promotions').insertOne(promo)
       return NextResponse.json(stripId(promo), { status: 201 })
     }
+    if (id === 'users') {
+      const ownerCheck = await requireOwner(request, db)
+      if (ownerCheck.error) return ownerCheck.error
+      const { email, password, name, role } = body
+      if (!email || !password || !role) return NextResponse.json({ error: 'Email, senha e papel obrigatórios' }, { status: 400 })
+      if (!['owner_admin', 'attendant', 'delivery_driver'].includes(role)) return NextResponse.json({ error: 'Papel inválido' }, { status: 400 })
+      const exists = await db.collection('users').findOne({ email: email.toLowerCase() })
+      if (exists) return NextResponse.json({ error: 'Email já cadastrado' }, { status: 400 })
+      const user = {
+        id: uuidv4(),
+        email: email.toLowerCase(),
+        name: name || email.split('@')[0],
+        passwordHash: bcrypt.hashSync(password, 8),
+        role,
+        createdAt: new Date().toISOString(),
+      }
+      await db.collection('users').insertOne(user)
+      return NextResponse.json(stripId(user), { status: 201 })
+    }
   }
 
   return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -521,13 +610,43 @@ async function handlePatch(request, pathParts) {
     if (id === 'orders' && targetId) {
       const order = await db.collection('orders').findOne({ id: targetId })
       if (!order) return NextResponse.json({ error: 'Pedido não encontrado' }, { status: 404 })
-      const valid = order.type === 'local' ? LOCAL_STATUSES : DELIVERY_STATUSES
-      if (!valid.includes(body.status)) return NextResponse.json({ error: 'Status inválido' }, { status: 400 })
-      const entry = { status: body.status, at: new Date().toISOString() }
-      await db.collection('orders').updateOne(
-        { id: targetId },
-        { $set: { status: body.status }, $push: { statusHistory: entry } }
-      )
+      const updates = {}
+      const entries = []
+      const now = new Date().toISOString()
+
+      // Operational status update (allowed for attendant + owner)
+      if (body.status !== undefined) {
+        const valid = order.type === 'local' ? LOCAL_STATUSES : DELIVERY_STATUSES
+        if (!valid.includes(body.status)) return NextResponse.json({ error: 'Status inválido' }, { status: 400 })
+        updates.status = body.status
+        entries.push({ status: body.status, at: now })
+      }
+      // Delivery status + observation (allowed for driver + owner)
+      if (body.deliveryStatus !== undefined) {
+        if (!['Entregue', 'Não Entregue'].includes(body.deliveryStatus)) return NextResponse.json({ error: 'Status de entrega inválido' }, { status: 400 })
+        if (body.deliveryStatus === 'Não Entregue' && !body.deliveryObservation) return NextResponse.json({ error: 'Observação obrigatória para pedido não entregue' }, { status: 400 })
+        updates.delivery = {
+          status: body.deliveryStatus,
+          observation: body.deliveryObservation || '',
+          updatedAt: now,
+          driverId: guard.user.id,
+        }
+        entries.push({ status: `Entrega: ${body.deliveryStatus}`, at: now, note: body.deliveryObservation || '' })
+      }
+      // Payment status/method update
+      if (body.paymentStatus || body.paymentMethod) {
+        const newPayment = { ...(order.payment || {}) }
+        if (body.paymentStatus) newPayment.status = body.paymentStatus
+        if (body.paymentMethod) newPayment.method = body.paymentMethod
+        if (body.paymentStatus === 'Pago') newPayment.paidAt = now
+        updates.payment = newPayment
+        entries.push({ status: `Pagamento: ${newPayment.status || ''} via ${newPayment.method || ''}`, at: now })
+      }
+
+      if (Object.keys(updates).length === 0) return NextResponse.json({ error: 'Nada a atualizar' }, { status: 400 })
+      const setObj = { $set: updates }
+      if (entries.length > 0) setObj.$push = { statusHistory: { $each: entries } }
+      await db.collection('orders').updateOne({ id: targetId }, setObj)
       const updated = await db.collection('orders').findOne({ id: targetId })
       return NextResponse.json(stripId(updated))
     }
@@ -594,6 +713,27 @@ async function handlePatch(request, pathParts) {
       const updated = await db.collection('settings').findOne({ id: 'branding' })
       return NextResponse.json(stripId(updated))
     }
+    if (id === 'payment-methods') {
+      const updates = { updatedAt: new Date().toISOString() }
+      if (Array.isArray(body.deliveryMethods)) updates.deliveryMethods = body.deliveryMethods
+      await db.collection('settings').updateOne({ id: 'payment-methods' }, { $set: updates }, { upsert: true })
+      const updated = await db.collection('settings').findOne({ id: 'payment-methods' })
+      return NextResponse.json(stripId(updated))
+    }
+    if (id === 'users' && targetId) {
+      const ownerCheck = await requireOwner(request, db)
+      if (ownerCheck.error) return ownerCheck.error
+      const updates = {}
+      if (body.role && ['owner_admin', 'attendant', 'delivery_driver', 'customer'].includes(body.role)) {
+        updates.role = body.role
+      }
+      if (body.name) updates.name = body.name
+      if (body.password) updates.passwordHash = bcrypt.hashSync(body.password, 8)
+      if (Object.keys(updates).length === 0) return NextResponse.json({ error: 'Nada a atualizar' }, { status: 400 })
+      await db.collection('users').updateOne({ id: targetId }, { $set: updates })
+      const updated = await db.collection('users').findOne({ id: targetId })
+      return NextResponse.json(stripId(updated))
+    }
     if (id === 'comandas' && targetId) {
       const comanda = await db.collection('comandas').findOne({ id: targetId })
       if (!comanda) return NextResponse.json({ error: 'Comanda não encontrada' }, { status: 404 })
@@ -630,6 +770,21 @@ async function handleDelete(request, pathParts) {
   if (resource === 'admin') {
     const guard = await requireAdmin(request, db)
     if (guard.error) return guard.error
+    if (id === 'orders' && targetId) {
+      // Only owner can delete orders
+      const owner = await requireOwner(request, db)
+      if (owner.error) return owner.error
+      const order = await db.collection('orders').findOne({ id: targetId })
+      if (order?.comandaId) {
+        // Remove from comanda and recompute total
+        await db.collection('comandas').updateOne(
+          { id: order.comandaId },
+          { $inc: { total: -(order.total || 0) }, $pull: { orderIds: targetId } }
+        )
+      }
+      await db.collection('orders').deleteOne({ id: targetId })
+      return NextResponse.json({ ok: true })
+    }
     if (id === 'products' && targetId) {
       await db.collection('products').deleteOne({ id: targetId })
       return NextResponse.json({ ok: true })
@@ -644,6 +799,12 @@ async function handleDelete(request, pathParts) {
     }
     if (id === 'promotions' && targetId) {
       await db.collection('promotions').deleteOne({ id: targetId })
+      return NextResponse.json({ ok: true })
+    }
+    if (id === 'users' && targetId) {
+      const owner = await requireOwner(request, db)
+      if (owner.error) return owner.error
+      await db.collection('users').deleteOne({ id: targetId })
       return NextResponse.json({ ok: true })
     }
   }

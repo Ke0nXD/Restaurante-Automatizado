@@ -35,16 +35,27 @@ const COMANDA_LABELS = {
   fechada: { label: 'Fechada', color: 'bg-zinc-500/20 text-zinc-300' },
 }
 
+const ROLES = {
+  owner_admin: 'Admin Dono',
+  admin: 'Admin Dono',
+  attendant: 'Atendente',
+  delivery_driver: 'Entregador',
+  customer: 'Cliente',
+}
+
+// Tabs with allowed roles; empty = all staff
 const TABS = [
-  { value: 'dashboard', label: 'Dashboard', Icon: LayoutDashboard },
-  { value: 'comandas', label: 'Comandas', Icon: ClipboardList },
-  { value: 'local', label: 'Pedidos Local', Icon: Utensils },
-  { value: 'delivery', label: 'Delivery', Icon: Bike },
-  { value: 'products', label: 'Produtos', Icon: Package },
-  { value: 'categories', label: 'Categorias', Icon: Tag },
-  { value: 'content', label: 'Conteúdo', Icon: Sparkles },
-  { value: 'settings', label: 'Configurações', Icon: Settings },
-  { value: 'users', label: 'Clientes', Icon: Users },
+  { value: 'dashboard', label: 'Dashboard', Icon: LayoutDashboard, roles: ['owner_admin', 'admin'] },
+  { value: 'comandas', label: 'Comandas', Icon: ClipboardList, roles: ['owner_admin', 'admin', 'attendant'] },
+  { value: 'local', label: 'Pedidos Local', Icon: Utensils, roles: ['owner_admin', 'admin', 'attendant'] },
+  { value: 'delivery', label: 'Delivery', Icon: Bike, roles: ['owner_admin', 'admin', 'attendant', 'delivery_driver'] },
+  { value: 'history', label: 'Histórico', Icon: Calendar, roles: ['owner_admin', 'admin'] },
+  { value: 'products', label: 'Produtos', Icon: Package, roles: ['owner_admin', 'admin'] },
+  { value: 'categories', label: 'Categorias', Icon: Tag, roles: ['owner_admin', 'admin'] },
+  { value: 'content', label: 'Conteúdo', Icon: Sparkles, roles: ['owner_admin', 'admin'] },
+  { value: 'payments', label: 'Pagamentos', Icon: CreditCard, roles: ['owner_admin', 'admin'] },
+  { value: 'settings', label: 'Configurações', Icon: Settings, roles: ['owner_admin', 'admin'] },
+  { value: 'users', label: 'Usuários', Icon: Users, roles: ['owner_admin', 'admin'] },
 ]
 
 function AdminPage() {
@@ -66,6 +77,9 @@ function AdminPage() {
   const [promotions, setPromotions] = useState([])
   const [editBanner, setEditBanner] = useState(null)
   const [editPromo, setEditPromo] = useState(null)
+  const [paymentMethodsConfig, setPaymentMethodsConfig] = useState([])
+  const [deliveryDialog, setDeliveryDialog] = useState(null)
+  const [filters, setFilters] = useState({ status: '', minValue: '', maxValue: '', table: '', address: '', dateFrom: '', dateTo: '', paymentStatus: '', paymentMethod: '', deliveryStatus: '' })
   const [search, setSearch] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [unread, setUnread] = useState(0)
@@ -92,29 +106,54 @@ function AdminPage() {
 
   useEffect(() => {
     const u = getUser()
-    if (!u || u.role !== 'admin' || !getToken()) { router.push('/login'); return }
+    if (!u || !['owner_admin', 'admin', 'attendant', 'delivery_driver'].includes(u.role) || !getToken()) {
+      router.push('/login'); return
+    }
     setUser(u)
+    // Set initial tab based on role
+    if (u.role === 'delivery_driver') setTab('delivery')
+    else if (u.role === 'attendant') setTab('comandas')
   }, [router])
+
+  const allowedTabs = TABS.filter((t) => t.roles.includes(user?.role))
+  const isOwner = user && ['owner_admin', 'admin'].includes(user.role)
+  const isAttendant = user?.role === 'attendant'
+  const isDriver = user?.role === 'delivery_driver'
 
   const loadAll = async () => {
     setLoading(true)
     try {
       const qs = search ? `?search=${encodeURIComponent(search)}` : ''
-      const [s, o, cmd, p, c, uu, b, pr] = await Promise.all([
-        apiFetch('/api/admin/stats'),
-        apiFetch(`/api/admin/orders${qs}`),
-        apiFetch(`/api/admin/comandas${qs}`),
-        apiFetch('/api/admin/products'),
-        apiFetch('/api/admin/categories'),
-        apiFetch('/api/admin/users'),
-        apiFetch('/api/admin/banners'),
-        apiFetch('/api/admin/promotions'),
-      ])
-      setStats(s); setOrders(o); setComandas(cmd); setProducts(p); setCategories(c); setUsers(uu)
-      setBanners(b); setPromotions(pr)
+      const promises = {
+        orders: apiFetch(`/api/admin/orders${qs ? qs + '&history=0' : '?history=0'}`),
+        history: isOwner ? apiFetch(`/api/admin/orders?history=1${search ? '&search=' + encodeURIComponent(search) : ''}`) : Promise.resolve([]),
+        comandas: apiFetch(`/api/admin/comandas${qs}`),
+      }
+      // Owner-only data
+      if (isOwner) {
+        promises.stats = apiFetch('/api/admin/stats')
+        promises.products = apiFetch('/api/admin/products')
+        promises.categories = apiFetch('/api/admin/categories')
+        promises.users = apiFetch('/api/admin/users')
+        promises.banners = apiFetch('/api/admin/banners')
+        promises.promotions = apiFetch('/api/admin/promotions')
+        promises.paymentMethodsConfig = apiFetch('/api/admin/payment-methods')
+      }
+      const results = await Promise.allSettled(Object.entries(promises).map(async ([k, p]) => [k, await p]))
+      const data = {}
+      results.forEach((r) => { if (r.status === 'fulfilled') { const [k, v] = r.value; data[k] = v } })
+      if (data.orders) setOrders([...(data.orders || []), ...(data.history || [])])
+      if (data.comandas) setComandas(data.comandas)
+      if (data.stats) setStats(data.stats)
+      if (data.products) setProducts(data.products)
+      if (data.categories) setCategories(data.categories)
+      if (data.users) setUsers(data.users)
+      if (data.banners) setBanners(data.banners)
+      if (data.promotions) setPromotions(data.promotions)
+      if (data.paymentMethodsConfig) setPaymentMethodsConfig(data.paymentMethodsConfig)
       prevIdsRef.current = {
-        orders: new Set(o.map((x) => x.id)),
-        pay: new Set(cmd.filter((x) => x.status === 'aguardando_pagamento').map((x) => x.id)),
+        orders: new Set((data.orders || []).map((x) => x.id)),
+        pay: new Set((data.comandas || []).filter((x) => x.status === 'aguardando_pagamento').map((x) => x.id)),
       }
     } catch (e) {
       if (e.message.includes('autenticado') || e.message.includes('negado')) { clearAuth(); router.push('/login') }
@@ -266,17 +305,95 @@ function AdminPage() {
     } catch (e) { toast.error(e.message) }
   }
 
+  const deleteOrder = async (orderId) => {
+    if (!confirm('⚠️ Tem certeza que deseja APAGAR este pedido? Esta ação é permanente.')) return
+    try {
+      await apiFetch(`/api/admin/orders/${orderId}`, { method: 'DELETE' })
+      setOrders((prev) => prev.filter((o) => o.id !== orderId))
+      toast.success('Pedido excluído')
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const saveDeliveryStatus = async (orderId, deliveryStatus, deliveryObservation) => {
+    try {
+      const updated = await apiFetch(`/api/admin/orders/${orderId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ deliveryStatus, deliveryObservation }),
+      })
+      setOrders((prev) => prev.map((o) => o.id === orderId ? updated : o))
+      toast.success(`Entrega marcada como "${deliveryStatus}"`)
+      setDeliveryDialog(null)
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const updatePayment = async (orderId, paymentStatus, paymentMethod) => {
+    try {
+      const updated = await apiFetch(`/api/admin/orders/${orderId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ paymentStatus, paymentMethod }),
+      })
+      setOrders((prev) => prev.map((o) => o.id === orderId ? updated : o))
+      toast.success('Pagamento atualizado')
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const savePaymentMethodsConfig = async (methods) => {
+    try {
+      await apiFetch('/api/admin/payment-methods', { method: 'PATCH', body: JSON.stringify({ deliveryMethods: methods }) })
+      setPaymentMethodsConfig(methods)
+      toast.success('Métodos de pagamento atualizados')
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const saveUser = async (u) => {
+    try {
+      if (u.id) {
+        const upd = await apiFetch(`/api/admin/users/${u.id}`, { method: 'PATCH', body: JSON.stringify(u) })
+        setUsers((prev) => prev.map((x) => x.id === upd.id ? upd : x))
+      } else {
+        const cr = await apiFetch('/api/admin/users', { method: 'POST', body: JSON.stringify(u) })
+        setUsers((prev) => [...prev, cr])
+      }
+      toast.success('Usuário salvo')
+      return true
+    } catch (e) { toast.error(e.message); return false }
+  }
+
+  const deleteUser = async (id) => {
+    if (!confirm('Excluir usuário?')) return
+    try {
+      await apiFetch(`/api/admin/users/${id}`, { method: 'DELETE' })
+      setUsers((prev) => prev.filter((x) => x.id !== id))
+      toast.success('Usuário excluído')
+    } catch (e) { toast.error(e.message) }
+  }
+
   if (!user) return null
 
-  const deliveryOrders = orders.filter((o) => o.type === 'delivery')
-  const localOrders = orders.filter((o) => o.type === 'local')
+  const applyFilters = (list) => list.filter((o) => {
+    if (filters.status && o.status !== filters.status) return false
+    if (filters.minValue && o.total < Number(filters.minValue)) return false
+    if (filters.maxValue && o.total > Number(filters.maxValue)) return false
+    if (filters.table && String(o.table || '') !== filters.table) return false
+    if (filters.address && !(o.address?.street || '').toLowerCase().includes(filters.address.toLowerCase())) return false
+    if (filters.dateFrom && new Date(o.createdAt) < new Date(filters.dateFrom)) return false
+    if (filters.dateTo && new Date(o.createdAt) > new Date(filters.dateTo + 'T23:59:59')) return false
+    if (filters.paymentStatus && o.payment?.status !== filters.paymentStatus) return false
+    if (filters.paymentMethod && o.payment?.method !== filters.paymentMethod) return false
+    if (filters.deliveryStatus && o.delivery?.status !== filters.deliveryStatus) return false
+    return true
+  })
+
+  const deliveryOrders = applyFilters(orders.filter((o) => o.type === 'delivery' && o.status !== 'Finalizado'))
+  const localOrders = applyFilters(orders.filter((o) => o.type === 'local' && o.status !== 'Finalizado'))
+  const historyOrders = applyFilters(orders.filter((o) => o.status === 'Finalizado'))
   const openComandas = comandas.filter((c) => c.status === 'aberta')
   const awaitingPay = comandas.filter((c) => c.status === 'aguardando_pagamento')
   const closedComandas = comandas.filter((c) => c.status === 'paga' || c.status === 'fechada')
 
   const NavList = ({ onSelect }) => (
     <div className="space-y-1">
-      {TABS.map(({ value, label, Icon }) => {
+      {allowedTabs.map(({ value, label, Icon }) => {
         const isActive = tab === value
         const count = value === 'comandas' ? (openComandas.length + awaitingPay.length) : value === 'local' ? localOrders.length : value === 'delivery' ? deliveryOrders.length : 0
         return (
@@ -351,15 +468,20 @@ function AdminPage() {
         </aside>
 
         <div className="min-w-0 flex-1">
-          {/* Search */}
-          {['local', 'delivery', 'comandas'].includes(tab) && (
-            <div className="mb-4 relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nome do cliente..." className="border-white/10 bg-white/5 pl-9" />
-            </div>
+          {/* Search + filters */}
+          {['local', 'delivery', 'comandas', 'history'].includes(tab) && (
+            <>
+              <div className="mb-3 relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nome do cliente..." className="border-white/10 bg-white/5 pl-9" />
+              </div>
+              {['local', 'delivery', 'history'].includes(tab) && (
+                <FiltersBar filters={filters} setFilters={setFilters} tab={tab} statuses={tab === 'delivery' ? DELIVERY_STATUSES : LOCAL_STATUSES} />
+              )}
+            </>
           )}
 
-          {tab === 'dashboard' && <DashboardTab stats={stats} orders={orders} />}
+          {tab === 'dashboard' && isOwner && <DashboardTab stats={stats} orders={orders} />}
           {tab === 'comandas' && (
             <ComandasTab
               open={openComandas} awaiting={awaitingPay} closed={closedComandas}
@@ -369,17 +491,18 @@ function AdminPage() {
               loading={loading}
             />
           )}
-          {tab === 'local' && <OrdersList orders={localOrders} statuses={LOCAL_STATUSES} onStatusChange={changeStatus} loading={loading} />}
-          {tab === 'delivery' && <OrdersList orders={deliveryOrders} statuses={DELIVERY_STATUSES} onStatusChange={changeStatus} loading={loading} />}
-          {tab === 'products' && (
+          {tab === 'local' && <OrdersList orders={localOrders} statuses={LOCAL_STATUSES} onStatusChange={changeStatus} loading={loading} isOwner={isOwner} onDelete={deleteOrder} onUpdatePayment={updatePayment} />}
+          {tab === 'delivery' && <OrdersList orders={deliveryOrders} statuses={DELIVERY_STATUSES} onStatusChange={changeStatus} loading={loading} isOwner={isOwner} onDelete={deleteOrder} onUpdatePayment={updatePayment} isDriver={isDriver} onDeliveryAction={(o) => setDeliveryDialog({ order: o, status: 'Entregue', observation: '' })} />}
+          {tab === 'history' && isOwner && <OrdersList orders={historyOrders} statuses={[...LOCAL_STATUSES, ...DELIVERY_STATUSES]} onStatusChange={changeStatus} loading={loading} isOwner={isOwner} onDelete={deleteOrder} onUpdatePayment={updatePayment} history />}
+          {tab === 'products' && isOwner && (
             <ProductsTab products={products} categories={categories} onEdit={setEditProduct} onDelete={deleteProduct} onNew={() => setEditProduct({ name: '', description: '', price: 0, image: '', categoryId: categories[0]?.id, active: true })} />
           )}
-          {tab === 'categories' && (
+          {tab === 'categories' && isOwner && (
             <CategoriesTab categories={categories} onEdit={setEditCategory} onDelete={deleteCategory} onNew={() => setEditCategory({ name: '', icon: '🍽️', order: categories.length + 1 })} />
           )}
-          {tab === 'users' && <UsersTab users={users} orders={orders} />}
-          {tab === 'settings' && <SettingsTab />}
-          {tab === 'content' && (
+          {tab === 'users' && isOwner && <UsersTab users={users} orders={orders} onSave={saveUser} onDelete={deleteUser} />}
+          {tab === 'settings' && isOwner && <SettingsTab />}
+          {tab === 'content' && isOwner && (
             <ContentTab
               banners={banners} promotions={promotions} products={products}
               onEditBanner={setEditBanner} onDeleteBanner={deleteBanner}
@@ -387,10 +510,16 @@ function AdminPage() {
               onToggleFeatured={toggleFeatured}
             />
           )}
+          {tab === 'payments' && isOwner && <PaymentsTab methods={paymentMethodsConfig} onSave={savePaymentMethodsConfig} />}
         </div>
       </div>
 
-      {/* Dialogs */}
+      <DeliveryActionDialog
+        dialog={deliveryDialog}
+        onClose={(updated) => setDeliveryDialog(updated || null)}
+        onConfirm={saveDeliveryStatus}
+      />
+
       <Dialog open={!!payDialog} onOpenChange={(o) => !o && setPayDialog(null)}>
         <DialogContent className="border-white/10 bg-zinc-950">
           <DialogHeader><DialogTitle>Confirmar pagamento</DialogTitle></DialogHeader>
@@ -722,7 +851,7 @@ function ComandaList({ list, onPayRequest, onAction, onStatusChange, loading, em
   )
 }
 
-function OrdersList({ orders, statuses, onStatusChange, loading }) {
+function OrdersList({ orders, statuses, onStatusChange, loading, isOwner, isDriver, onDelete, onUpdatePayment, onDeliveryAction, history }) {
   if (loading) return <p className="text-muted-foreground">Carregando...</p>
   if (!orders.length) return <Card className="border-white/10 bg-zinc-900/60"><CardContent className="p-10 text-center text-muted-foreground">Nenhum pedido</CardContent></Card>
   return (
@@ -731,24 +860,47 @@ function OrdersList({ orders, statuses, onStatusChange, loading }) {
         <Card key={o.id} className="border-white/10 bg-zinc-900/60"><CardContent className="p-4 sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-bold">#{o.id.slice(0,8).toUpperCase()}</span>{o.type==='local'?<Badge className="bg-amber-500/20 text-amber-300"><Utensils className="mr-1 h-3 w-3"/>Mesa {o.table}</Badge>:<Badge className="bg-orange-500/20 text-orange-300"><Bike className="mr-1 h-3 w-3"/>Delivery</Badge>}</div>
+              <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-bold">#{o.id.slice(0,8).toUpperCase()}</span>{o.type==='local'?<Badge className="bg-amber-500/20 text-amber-300"><Utensils className="mr-1 h-3 w-3"/>Mesa {o.table}</Badge>:<Badge className="bg-orange-500/20 text-orange-300"><Bike className="mr-1 h-3 w-3"/>Delivery</Badge>}
+                {o.payment?.status === 'Pago' ? <Badge className="bg-emerald-500/20 text-emerald-300">💰 Pago · {o.payment.method}</Badge> : <Badge variant="outline" className="border-amber-500/30 text-amber-300">⏳ Pgto Pendente</Badge>}
+                {o.delivery?.status === 'Entregue' && <Badge className="bg-emerald-500/20 text-emerald-300">📦 Entregue</Badge>}
+                {o.delivery?.status === 'Não Entregue' && <Badge className="bg-red-500/20 text-red-300">⚠️ Não Entregue</Badge>}
+              </div>
               <div className="mt-1 text-sm font-medium">{o.customer?.name}{o.customer?.phone && <span className="text-muted-foreground"> · {o.customer.phone}</span>}</div>
               <div className="text-xs text-muted-foreground">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
               {o.type==='delivery' && o.address && <div className="mt-1 text-xs text-muted-foreground">📍 {o.address.street}, {o.address.number} · {o.address.district} · {o.address.city}</div>}
-              {o.payment?.method && <div className="mt-1 text-xs text-muted-foreground">💳 {o.payment.method} ({o.payment.status})</div>}
+              {o.delivery?.observation && <div className="mt-1 rounded-md bg-red-500/10 px-2 py-1 text-xs text-red-300">💬 {o.delivery.observation}</div>}
             </div>
             <div className="w-full sm:w-auto sm:text-right">
               <div className="text-xl font-bold text-amber-400">{brl(o.total)}</div>
-              <Select value={o.status} onValueChange={(v) => onStatusChange(o.id, v)}>
-                <SelectTrigger className="mt-1 h-9 border-white/10 bg-white/5 text-xs w-full sm:w-48"><SelectValue /></SelectTrigger>
-                <SelectContent>{statuses.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-              </Select>
+              {!isDriver && !history && (
+                <Select value={o.status} onValueChange={(v) => onStatusChange(o.id, v)}>
+                  <SelectTrigger className="mt-1 h-9 border-white/10 bg-white/5 text-xs w-full sm:w-48"><SelectValue /></SelectTrigger>
+                  <SelectContent>{statuses.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                </Select>
+              )}
+              {history && <Badge className="mt-1 bg-zinc-500/20 text-zinc-300">{o.status}</Badge>}
             </div>
           </div>
           <div className="mt-3 rounded-lg border border-white/5 bg-black/30 p-3">
             <div className="space-y-1">{o.items.map((i, k) => (
               <div key={k} className="flex justify-between text-sm"><div className="min-w-0 flex-1 truncate"><span className="text-muted-foreground">{i.quantity}× </span><span>{i.name}</span>{i.observations && <span className="italic text-amber-300/70"> — {i.observations}</span>}</div><span className="whitespace-nowrap text-muted-foreground">{brl(i.subtotal)}</span></div>
             ))}</div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {isDriver && o.type === 'delivery' && !o.delivery?.status && (
+              <Button onClick={() => onDeliveryAction(o)} size="sm" className="bg-gradient-to-r from-emerald-500 to-green-600"><CheckCircle2 className="mr-1 h-4 w-4"/>Marcar entrega</Button>
+            )}
+            {!isDriver && o.payment?.status !== 'Pago' && !history && (
+              <Select value="" onValueChange={(v) => onUpdatePayment(o.id, 'Pago', v)}>
+                <SelectTrigger className="h-8 border-emerald-500/30 bg-emerald-500/10 text-xs w-48 text-emerald-300"><SelectValue placeholder="💰 Marcar como pago (método)" /></SelectTrigger>
+                <SelectContent>
+                  {['Pix', 'Cartão de Crédito', 'Cartão de Débito', 'Dinheiro'].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+            {isOwner && onDelete && (
+              <Button variant="outline" size="sm" className="border-red-500/30 text-red-400 hover:bg-red-500/10" onClick={() => onDelete(o.id)}><Trash2 className="mr-1 h-3 w-3"/>Apagar</Button>
+            )}
           </div>
         </CardContent></Card>
       ))}
@@ -781,12 +933,145 @@ function CategoriesTab({ categories, onEdit, onDelete, onNew }) {
   </>)
 }
 
-function UsersTab({ users, orders }) {
-  return (<Card className="border-white/10 bg-zinc-900/60"><CardContent className="p-0"><div className="divide-y divide-white/5">
-    {users.map((u) => { const userOrders = orders.filter((o) => o.userId === u.id); return (
-      <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 p-4"><div className="min-w-0"><div className="font-medium">{u.name}</div><div className="truncate text-sm text-muted-foreground">{u.email}</div></div><div className="flex items-center gap-3"><span className="text-sm text-muted-foreground">{userOrders.length} pedidos</span><Badge className={u.role === 'admin' ? 'bg-amber-500 text-black' : 'bg-white/10'}>{u.role}</Badge></div></div>
-    )})}
-  </div></CardContent></Card>)
+function UsersTab({ users, orders, onSave, onDelete }) {
+  const [editing, setEditing] = useState(null)
+  return (
+    <>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-lg font-semibold">Usuários e Permissões ({users.length})</h3>
+        <Button onClick={() => setEditing({ email: '', password: '', name: '', role: 'attendant' })} className="bg-gradient-to-r from-amber-500 to-orange-600"><Plus className="mr-1 h-4 w-4" /> Novo usuário</Button>
+      </div>
+      <Card className="border-white/10 bg-zinc-900/60"><CardContent className="p-0"><div className="divide-y divide-white/5">
+        {users.map((u) => { const userOrders = orders.filter((o) => o.userId === u.id); const roleLabel = ROLES[u.role] || u.role; return (
+          <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div className="min-w-0">
+              <div className="font-medium">{u.name}</div>
+              <div className="truncate text-sm text-muted-foreground">{u.email}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">{userOrders.length} pedidos</span>
+              <Badge className={['owner_admin','admin'].includes(u.role) ? 'bg-amber-500 text-black' : u.role === 'attendant' ? 'bg-blue-500/20 text-blue-300' : u.role === 'delivery_driver' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-white/10'}>{roleLabel}</Badge>
+              {u.role !== 'customer' && (
+                <Button variant="outline" size="sm" className="border-white/10" onClick={() => setEditing({ id: u.id, name: u.name, role: u.role, password: '' })}><Pencil className="h-3 w-3" /></Button>
+              )}
+              {u.email !== 'admin@sabor.com' && (
+                <Button variant="outline" size="sm" className="border-red-500/30 text-red-400" onClick={() => onDelete(u.id)}><Trash2 className="h-3 w-3" /></Button>
+              )}
+            </div>
+          </div>
+        )})}
+      </div></CardContent></Card>
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent className="border-white/10 bg-zinc-950">
+          <DialogHeader><DialogTitle>{editing?.id ? 'Editar' : 'Novo'} usuário</DialogTitle></DialogHeader>
+          {editing && (<div className="space-y-3">
+            {!editing.id && <div><Label>Email</Label><Input type="email" value={editing.email} onChange={(e) => setEditing({...editing, email: e.target.value})} className="mt-1 border-white/10 bg-white/5" /></div>}
+            <div><Label>Nome</Label><Input value={editing.name || ''} onChange={(e) => setEditing({...editing, name: e.target.value})} className="mt-1 border-white/10 bg-white/5" /></div>
+            <div><Label>Senha {editing.id && <span className="text-xs text-muted-foreground">(deixe em branco para manter)</span>}</Label><Input type="password" value={editing.password || ''} onChange={(e) => setEditing({...editing, password: e.target.value})} className="mt-1 border-white/10 bg-white/5" /></div>
+            <div><Label>Papel</Label>
+              <Select value={editing.role} onValueChange={(v) => setEditing({...editing, role: v})}>
+                <SelectTrigger className="mt-1 border-white/10 bg-white/5"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="owner_admin">🛡️ Admin Dono (acesso total)</SelectItem>
+                  <SelectItem value="attendant">👨‍🍳 Atendente (comandas e pedidos)</SelectItem>
+                  <SelectItem value="delivery_driver">🛵 Entregador (apenas delivery)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>)}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>Cancelar</Button>
+            <Button onClick={async () => { const ok = await onSave(editing); if (ok) setEditing(null) }} className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+function PaymentsTab({ methods, onSave }) {
+  const [local, setLocal] = useState(methods)
+  useEffect(() => { setLocal(methods) }, [methods])
+  const toggle = (i) => setLocal((prev) => prev.map((m, k) => k === i ? { ...m, active: !m.active } : m))
+  const anyActive = local.some((m) => m.active)
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-2xl font-bold">Métodos de pagamento do Delivery</h2>
+        <p className="text-sm text-muted-foreground">Escolha quais métodos aparecem no checkout dos pedidos delivery.</p>
+      </div>
+      {!anyActive && (
+        <Card className="border-red-500/30 bg-red-500/5"><CardContent className="p-4"><p className="text-sm text-red-300">⚠️ Nenhum método ativo — clientes não conseguirão finalizar pedidos delivery. Ative ao menos um método abaixo.</p></CardContent></Card>
+      )}
+      <Card className="border-white/10 bg-zinc-900/60"><CardContent className="p-0">
+        <div className="divide-y divide-white/5">
+          {local.map((m, i) => (
+            <div key={m.id} className="flex items-center justify-between p-4">
+              <div className="flex items-center gap-3">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${m.active ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-muted-foreground'}`}>
+                  {m.id === 'pix' && <QrCode className="h-5 w-5" />}
+                  {m.id === 'credit_card' && <CreditCard className="h-5 w-5" />}
+                  {m.id === 'debit_card' && <CreditCard className="h-5 w-5" />}
+                  {m.id === 'cash_on_delivery' && <Banknote className="h-5 w-5" />}
+                </div>
+                <div>
+                  <div className="font-medium">{m.label}</div>
+                  <div className="text-xs text-muted-foreground">{m.active ? 'Disponível no checkout' : 'Oculto para clientes'}</div>
+                </div>
+              </div>
+              <Switch checked={m.active} onCheckedChange={() => toggle(i)} />
+            </div>
+          ))}
+        </div>
+      </CardContent></Card>
+      <div className="flex justify-end">
+        <Button onClick={() => onSave(local)} size="lg" className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar configuração</Button>
+      </div>
+    </div>
+  )
+}
+
+function DeliveryActionDialog({ dialog, onClose, onConfirm }) {
+  if (!dialog) return null
+  const { order, status, observation } = dialog
+  return (
+    <Dialog open={!!dialog} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="border-white/10 bg-zinc-950">
+        <DialogHeader><DialogTitle>Confirmar entrega — Pedido #{order.id.slice(0,8).toUpperCase()}</DialogTitle></DialogHeader>
+        <div className="space-y-4">
+          <RadioGroup value={status} onValueChange={(v) => onClose({ ...dialog, status: v })} className="space-y-2">
+            <label className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${status === 'Entregue' ? 'border-emerald-500 bg-emerald-500/5' : 'border-white/10'}`}>
+              <RadioGroupItem value="Entregue" /><Check className="h-5 w-5 text-emerald-400" /><span>Entregue com sucesso</span>
+            </label>
+            <label className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${status === 'Não Entregue' ? 'border-red-500 bg-red-500/5' : 'border-white/10'}`}>
+              <RadioGroupItem value="Não Entregue" /><X className="h-5 w-5 text-red-400" /><span>Não Entregue</span>
+            </label>
+          </RadioGroup>
+          {status === 'Não Entregue' && (
+            <div>
+              <Label className="mb-1 block">Motivo (obrigatório)</Label>
+              <Textarea
+                value={observation || ''}
+                onChange={(e) => onClose({ ...dialog, observation: e.target.value })}
+                placeholder="Ex.: cliente não estava no local, endereço incorreto, pedido recusado..."
+                className="min-h-24 border-white/10 bg-white/5"
+              />
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onClose()}>Cancelar</Button>
+          <Button
+            disabled={status === 'Não Entregue' && !observation}
+            onClick={() => onConfirm(order.id, status, observation)}
+            className={status === 'Entregue' ? 'bg-gradient-to-r from-emerald-500 to-green-600' : 'bg-gradient-to-r from-red-500 to-orange-600'}
+          >
+            <CheckCircle2 className="mr-1 h-4 w-4" /> Confirmar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 function StatCard({ icon, label, value, color }) {
@@ -922,6 +1207,93 @@ function SettingsTab() {
           {saving ? 'Salvando...' : 'Salvar alterações'}
         </Button>
       </div>
+    </div>
+  )
+}
+
+function FiltersBar({ filters, setFilters, tab, statuses }) {
+  const [open, setOpen] = useState(false)
+  const count = Object.values(filters).filter((v) => v).length
+  const clear = () => setFilters({ status: '', minValue: '', maxValue: '', table: '', address: '', dateFrom: '', dateTo: '', paymentStatus: '', paymentMethod: '', deliveryStatus: '' })
+  return (
+    <div className="mb-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" onClick={() => setOpen(!open)} className="border-white/10">
+          🔍 Filtros {count > 0 && <Badge className="ml-1 bg-amber-500 text-black text-[10px]">{count}</Badge>}
+        </Button>
+        {count > 0 && <Button variant="ghost" size="sm" onClick={clear} className="text-muted-foreground">Limpar</Button>}
+      </div>
+      {open && (
+        <Card className="mt-2 border-white/10 bg-zinc-900/60"><CardContent className="p-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div>
+              <Label className="text-xs">Status</Label>
+              <Select value={filters.status || 'all'} onValueChange={(v) => setFilters({ ...filters, status: v === 'all' ? '' : v })}>
+                <SelectTrigger className="mt-1 border-white/10 bg-white/5"><SelectValue placeholder="Todos" /></SelectTrigger>
+                <SelectContent><SelectItem value="all">Todos</SelectItem>{statuses.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Data de</Label>
+              <Input type="date" value={filters.dateFrom} onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+            </div>
+            <div>
+              <Label className="text-xs">Data até</Label>
+              <Input type="date" value={filters.dateTo} onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+            </div>
+            <div>
+              <Label className="text-xs">Valor mínimo (R$)</Label>
+              <Input type="number" step="0.01" value={filters.minValue} onChange={(e) => setFilters({ ...filters, minValue: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+            </div>
+            <div>
+              <Label className="text-xs">Valor máximo (R$)</Label>
+              <Input type="number" step="0.01" value={filters.maxValue} onChange={(e) => setFilters({ ...filters, maxValue: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+            </div>
+            {tab === 'local' && (
+              <div>
+                <Label className="text-xs">Mesa</Label>
+                <Input value={filters.table} onChange={(e) => setFilters({ ...filters, table: e.target.value })} placeholder="Ex.: 5" className="mt-1 border-white/10 bg-white/5" />
+              </div>
+            )}
+            {tab === 'delivery' && (
+              <>
+                <div>
+                  <Label className="text-xs">Endereço</Label>
+                  <Input value={filters.address} onChange={(e) => setFilters({ ...filters, address: e.target.value })} placeholder="Rua, avenida..." className="mt-1 border-white/10 bg-white/5" />
+                </div>
+                <div>
+                  <Label className="text-xs">Status entrega</Label>
+                  <Select value={filters.deliveryStatus || 'all'} onValueChange={(v) => setFilters({ ...filters, deliveryStatus: v === 'all' ? '' : v })}>
+                    <SelectTrigger className="mt-1 border-white/10 bg-white/5"><SelectValue placeholder="Todos" /></SelectTrigger>
+                    <SelectContent><SelectItem value="all">Todos</SelectItem><SelectItem value="Entregue">Entregue</SelectItem><SelectItem value="Não Entregue">Não Entregue</SelectItem></SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+            {tab === 'history' && (
+              <>
+                <div>
+                  <Label className="text-xs">Status do pagamento</Label>
+                  <Select value={filters.paymentStatus || 'all'} onValueChange={(v) => setFilters({ ...filters, paymentStatus: v === 'all' ? '' : v })}>
+                    <SelectTrigger className="mt-1 border-white/10 bg-white/5"><SelectValue placeholder="Todos" /></SelectTrigger>
+                    <SelectContent><SelectItem value="all">Todos</SelectItem><SelectItem value="Pago">Pago</SelectItem><SelectItem value="Pendente">Pendente</SelectItem></SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Método de pagamento</Label>
+                  <Select value={filters.paymentMethod || 'all'} onValueChange={(v) => setFilters({ ...filters, paymentMethod: v === 'all' ? '' : v })}>
+                    <SelectTrigger className="mt-1 border-white/10 bg-white/5"><SelectValue placeholder="Todos" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos</SelectItem>
+                      {['Pix', 'PIX', 'Cartão de Crédito', 'Cartão de Débito', 'Dinheiro', 'Pagar com Dinheiro na Entrega'].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+          </div>
+        </CardContent></Card>
+      )}
     </div>
   )
 }
