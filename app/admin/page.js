@@ -82,9 +82,10 @@ function AdminPage() {
   const [filters, setFilters] = useState({ status: '', minValue: '', maxValue: '', table: '', address: '', dateFrom: '', dateTo: '', paymentStatus: '', paymentMethod: '', deliveryStatus: '' })
   const [search, setSearch] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
-  const [unread, setUnread] = useState(0)
-  const [notifList, setNotifList] = useState([])
-  const prevIdsRef = useRef({ orders: new Set(), pay: new Set() })
+
+  const [notifications, setNotifications] = useState([])
+  const [notifBellOpen, setNotifBellOpen] = useState(false)
+  const beepedIdsRef = useRef(new Set())
 
   const playBeep = () => {
     try {
@@ -102,6 +103,15 @@ function AdminPage() {
         }, i * 200)
       })
     } catch {}
+  }
+
+  // Fetch notifications from server (source of truth)
+  const fetchNotifications = async () => {
+    try {
+      const list = await apiFetch('/api/admin/notifications')
+      setNotifications(list)
+      return list
+    } catch { return [] }
   }
 
   useEffect(() => {
@@ -151,52 +161,59 @@ function AdminPage() {
       if (data.banners) setBanners(data.banners)
       if (data.promotions) setPromotions(data.promotions)
       if (data.paymentMethodsConfig) setPaymentMethodsConfig(data.paymentMethodsConfig)
-      prevIdsRef.current = {
-        orders: new Set((data.orders || []).map((x) => x.id)),
-        pay: new Set((data.comandas || []).filter((x) => x.status === 'aguardando_pagamento').map((x) => x.id)),
-      }
     } catch (e) {
       if (e.message.includes('autenticado') || e.message.includes('negado')) { clearAuth(); router.push('/login') }
       else toast.error(e.message)
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { if (user) loadAll() }, [user, search])
+  useEffect(() => {
+    if (user) {
+      loadAll()
+      // On first load, fetch notifications and mark all as "already beeped" to avoid beeping for old ones
+      apiFetch('/api/admin/notifications').then((notifs) => {
+        setNotifications(notifs)
+        notifs.forEach((n) => beepedIdsRef.current.add(n.id))
+      }).catch(() => {})
+    }
+  }, [user, search])
 
-  // Poll for new orders/payment requests
+  // Poll for new data + notifications (server-driven, no duplicates)
   useEffect(() => {
     if (!user) return
-    const iv = setInterval(async () => {
+    const pollOnce = async () => {
       try {
         const qs = search ? `?search=${encodeURIComponent(search)}` : ''
-        const [s, o, cmd] = await Promise.all([
-          apiFetch('/api/admin/stats'),
-          apiFetch(`/api/admin/orders${qs}`),
+        const [o, cmd, notifs] = await Promise.all([
+          apiFetch(`/api/admin/orders${qs ? qs + '&history=0' : '?history=0'}`),
           apiFetch(`/api/admin/comandas${qs}`),
+          apiFetch('/api/admin/notifications'),
         ])
-        const prevO = prevIdsRef.current.orders
-        const prevP = prevIdsRef.current.pay
-        const newOrders = o.filter((x) => !prevO.has(x.id))
-        const newPay = cmd.filter((x) => x.status === 'aguardando_pagamento' && !prevP.has(x.id))
-        if (newOrders.length > 0 || newPay.length > 0) {
+        // Detect NEW notifications (not beeped yet in this session) to play sound + toast
+        const freshUnread = notifs.filter((n) => !n.isRead && !beepedIdsRef.current.has(n.id))
+        if (freshUnread.length > 0) {
           playBeep()
-          const notifs = [
-            ...newOrders.map((x) => ({ type: 'order', id: x.id, text: x.type === 'local' ? `Novo pedido Mesa ${x.table} — ${brl(x.total)}` : `Novo delivery — ${x.customer?.name} — ${brl(x.total)}`, at: new Date().toISOString() })),
-            ...newPay.map((x) => ({ type: 'payment', id: x.id, text: `💰 Mesa ${x.table} pediu a conta (${x.paymentMethod}) — ${brl(x.total)}`, at: new Date().toISOString() })),
-          ]
-          setNotifList((prev) => [...notifs, ...prev].slice(0, 20))
-          setUnread((u) => u + notifs.length)
-          notifs.forEach((n) => toast.info(n.text, { duration: 6000 }))
+          freshUnread.forEach((n) => {
+            toast.info(`${n.title}${n.message ? ' — ' + n.message : ''}`, { duration: 6000, id: `notif-${n.id}` })
+            beepedIdsRef.current.add(n.id)
+          })
         }
-        setStats(s); setOrders(o); setComandas(cmd)
-        prevIdsRef.current = {
-          orders: new Set(o.map((x) => x.id)),
-          pay: new Set(cmd.filter((x) => x.status === 'aguardando_pagamento').map((x) => x.id)),
+        // Also add to beeped set any already-read so they never beep again
+        notifs.filter((n) => n.isRead).forEach((n) => beepedIdsRef.current.add(n.id))
+        setNotifications(notifs)
+        setOrders((prev) => {
+          const history = prev.filter((x) => x.status === 'Finalizado')
+          return [...o, ...history]
+        })
+        setComandas(cmd)
+        if (isOwner) {
+          apiFetch('/api/admin/stats').then(setStats).catch(() => {})
         }
       } catch {}
-    }, 8000)
+    }
+    const iv = setInterval(pollOnce, 8000)
     return () => clearInterval(iv)
-  }, [user, search])
+  }, [user, search, isOwner])
 
   const logout = () => { clearAuth(); router.push('/') }
 
@@ -433,23 +450,43 @@ function AdminPage() {
             </Link>
           </div>
           <div className="flex items-center gap-2">
-            <Sheet>
+            <Sheet open={notifBellOpen} onOpenChange={async (open) => {
+              setNotifBellOpen(open)
+              if (open) {
+                // Mark all as read when bell is opened
+                try {
+                  await apiFetch('/api/admin/notifications', { method: 'POST', body: JSON.stringify({ action: 'read-all' }) })
+                  // Update local state optimistically
+                  setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })))
+                } catch {}
+              }
+            }}>
               <SheetTrigger asChild>
-                <Button variant="outline" size="sm" className="relative border-white/10 bg-white/5" onClick={() => setUnread(0)}>
+                <Button variant="outline" size="sm" className="relative border-white/10 bg-white/5">
                   <Bell className="h-4 w-4" />
-                  {unread > 0 && <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{unread}</span>}
+                  {notifications.filter((n) => !n.isRead).length > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                      {notifications.filter((n) => !n.isRead).length}
+                    </span>
+                  )}
                 </Button>
               </SheetTrigger>
-              <SheetContent side="right" className="w-full border-white/10 bg-zinc-950 sm:max-w-md">
+              <SheetContent side="right" className="w-full border-white/10 bg-zinc-950 sm:max-w-md overflow-y-auto">
                 <div className="mb-4 flex items-center gap-2"><Bell className="h-5 w-5 text-amber-400" /><h2 className="text-lg font-bold">Notificações</h2></div>
-                {notifList.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Nenhuma notificação ainda.</p>
+                {notifications.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Nenhuma notificação.</p>
                 ) : (
                   <div className="space-y-2">
-                    {notifList.map((n, i) => (
-                      <div key={i} className={`rounded-lg border p-3 text-sm ${n.type === 'payment' ? 'border-amber-500/30 bg-amber-500/5' : 'border-emerald-500/30 bg-emerald-500/5'}`}>
-                        <div>{n.text}</div>
-                        <div className="mt-1 text-[10px] text-muted-foreground">{new Date(n.at).toLocaleTimeString('pt-BR')}</div>
+                    {notifications.map((n) => (
+                      <div key={n.id} className={`rounded-lg border p-3 text-sm ${n.isRead ? 'border-white/5 bg-white/5 opacity-60' : n.type === 'payment_request' ? 'border-amber-500/40 bg-amber-500/10' : 'border-emerald-500/40 bg-emerald-500/10'}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium leading-tight">{n.title}</div>
+                            {n.message && <div className="mt-0.5 text-xs text-muted-foreground">{n.message}</div>}
+                          </div>
+                          {!n.isRead && <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" />}
+                        </div>
+                        <div className="mt-1 text-[10px] text-muted-foreground">{new Date(n.createdAt).toLocaleString('pt-BR')}</div>
                       </div>
                     ))}
                   </div>

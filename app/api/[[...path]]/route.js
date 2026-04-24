@@ -159,6 +159,21 @@ async function requireAdmin(request, db) {
   return { user: dbUser }
 }
 
+async function createNotification(db, { type, referenceId, title, message, targetRoles }) {
+  const notif = {
+    id: uuidv4(),
+    type,
+    referenceId: referenceId || null,
+    title: title || '',
+    message: message || '',
+    targetRoles: targetRoles || ['owner_admin', 'admin', 'attendant'],
+    readBy: [],
+    createdAt: new Date().toISOString(),
+  }
+  await db.collection('notifications').insertOne(notif)
+  return notif
+}
+
 async function requireOwner(request, db) {
   const res = await requireAdmin(request, db)
   if (res.error) return res
@@ -326,6 +341,21 @@ async function handleGet(request, pathParts) {
       const s = await db.collection('settings').findOne({ id: 'payment-methods' })
       return NextResponse.json(s?.deliveryMethods || [])
     }
+    if (id === 'notifications') {
+      // Get notifications targeted to current user's role, newest first, limit 50
+      const me = guard.user
+      const notifs = await db.collection('notifications')
+        .find({ targetRoles: { $in: [me.role] } })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .toArray()
+      // Mark each with isRead flag for current user
+      const enriched = notifs.map((n) => ({
+        ...stripId(n),
+        isRead: (n.readBy || []).includes(me.id),
+      }))
+      return NextResponse.json(enriched)
+    }
     if (id === 'banners') {
       const banners = await db.collection('banners').find({}).toArray()
       return NextResponse.json(banners.map(stripId))
@@ -490,6 +520,15 @@ async function handlePost(request, pathParts) {
         { $inc: { total }, $push: { orderIds: order.id } }
       )
     }
+
+    // Create notification for new order
+    await createNotification(db, {
+      type: type === 'local' ? 'new_local_order' : 'new_delivery_order',
+      referenceId: order.id,
+      title: type === 'local' ? `Novo pedido — Mesa ${order.table}` : `Novo delivery — ${order.customer?.name}`,
+      message: `${snapshotItems.length} ${snapshotItems.length === 1 ? 'item' : 'itens'} · ${total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`,
+      targetRoles: type === 'local' ? ['owner_admin', 'admin', 'attendant'] : ['owner_admin', 'admin', 'attendant', 'delivery_driver'],
+    })
     return NextResponse.json({ ...stripId(order), comandaId }, { status: 201 })
   }
 
@@ -506,6 +545,14 @@ async function handlePost(request, pathParts) {
       { $set: { status: 'aguardando_pagamento', paymentMethod: method, paymentRequestedAt: new Date().toISOString() } }
     )
     const updated = await db.collection('comandas').findOne({ id })
+    // Create notification for payment request
+    await createNotification(db, {
+      type: 'payment_request',
+      referenceId: updated.id,
+      title: `💰 Mesa ${updated.table} pediu a conta`,
+      message: `${updated.customer?.name} · ${method} · ${(updated.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`,
+      targetRoles: ['owner_admin', 'admin', 'attendant'],
+    })
     return NextResponse.json(stripId(updated))
   }
 
@@ -591,6 +638,22 @@ async function handlePost(request, pathParts) {
       }
       await db.collection('users').insertOne(user)
       return NextResponse.json(stripId(user), { status: 201 })
+    }
+    if (id === 'notifications' && body.action === 'read-all') {
+      const me = guard.user
+      await db.collection('notifications').updateMany(
+        { targetRoles: { $in: [me.role] }, readBy: { $ne: me.id } },
+        { $push: { readBy: me.id } }
+      )
+      return NextResponse.json({ ok: true })
+    }
+    if (id === 'notifications' && body.notificationId && body.action === 'read') {
+      const me = guard.user
+      await db.collection('notifications').updateOne(
+        { id: body.notificationId, readBy: { $ne: me.id } },
+        { $push: { readBy: me.id } }
+      )
+      return NextResponse.json({ ok: true })
     }
   }
 
