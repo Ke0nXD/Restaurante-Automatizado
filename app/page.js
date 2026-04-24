@@ -75,6 +75,26 @@ function App() {
         // Clean up any legacy shared-cache entry from older versions
         localStorage.removeItem('sabor_recent_orders')
       }
+
+      // === Continue on active comanda (flow=local&table=X) ===
+      const sp = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+      const flowParam = sp?.get('flow')
+      const tableParam = sp?.get('table')
+      const activeCtxRaw = localStorage.getItem('sabor_active_comanda')
+      if (flowParam === 'local' && tableParam) {
+        setOrderType('local')
+        setTableNumber(String(tableParam))
+        setView('menu')
+      } else if (activeCtxRaw && u?.id) {
+        try {
+          const ctx = JSON.parse(activeCtxRaw)
+          if (ctx?.userId === u.id && ctx?.table) {
+            setOrderType('local')
+            setTableNumber(String(ctx.table))
+          }
+        } catch {}
+      }
+
       // Restore pending add after login
       if (u) {
         const pending = localStorage.getItem('sabor_pending_add')
@@ -112,7 +132,7 @@ function App() {
         setFeatured(await fRes.json())
         const pm = await pmRes.json()
         setPaymentMethods(pm)
-        if (pm.length > 0) setPaymentMethod(pm[0].label)
+        if (pm.length > 0 && pm[0]?.id) setPaymentMethod(pm[0].id)
       } catch (e) {
         toast.error('Erro ao carregar cardápio')
       } finally {
@@ -212,8 +232,14 @@ function App() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro ao enviar pedido')
       setCompletedOrder(data)
-      if (data.comandaId) {
-        localStorage.setItem('sabor_active_comanda', data.comandaId)
+      if (data.comandaId && data.type === 'local' && authUser?.id) {
+        // Persist active comanda context so user can continue adding items later
+        localStorage.setItem('sabor_active_comanda', JSON.stringify({
+          comandaId: data.comandaId,
+          table: data.table,
+          userId: authUser.id,
+          openedAt: data.createdAt,
+        }))
       }
       const recent = [{ id: data.id, type: data.type, total: data.total, createdAt: data.createdAt, comandaId: data.comandaId }, ...recentOrders].slice(0, 5)
       // Only persist per user (guests don't get a history)
@@ -483,17 +509,26 @@ function App() {
               </div>
             </div>
           </div>
-          <Sheet open={cartOpen} onOpenChange={setCartOpen}>
-            <SheetTrigger asChild>
-              <Button variant="outline" size="sm" className="relative border-white/10 bg-white/5 hover:bg-white/10">
-                <ShoppingCart className="h-4 w-4" />
-                {cartCount > 0 && (
-                  <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-black">
-                    {cartCount}
-                  </span>
-                )}
-              </Button>
-            </SheetTrigger>
+          <div className="flex items-center gap-2">
+            {authUser && (
+              <Link href="/minha-conta">
+                <Button variant="outline" size="sm" className="border-white/10 bg-white/5 hover:bg-white/10">
+                  <Receipt className="h-4 w-4 sm:mr-1" />
+                  <span className="hidden sm:inline">Minha conta</span>
+                </Button>
+              </Link>
+            )}
+            <Sheet open={cartOpen} onOpenChange={setCartOpen}>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="sm" className="relative border-white/10 bg-white/5 hover:bg-white/10">
+                  <ShoppingCart className="h-4 w-4" />
+                  {cartCount > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-black">
+                      {cartCount}
+                    </span>
+                  )}
+                </Button>
+              </SheetTrigger>
             <SheetContent side="right" className="flex w-full flex-col border-white/10 bg-zinc-950 sm:max-w-lg">
               <SheetHeader>
                 <SheetTitle className="text-2xl">Seu pedido</SheetTitle>
@@ -561,10 +596,36 @@ function App() {
               )}
             </SheetContent>
           </Sheet>
+          </div>
         </div>
 
         {view === 'menu' && (
           <div className="mx-auto max-w-6xl space-y-3 px-4 pb-3">
+            {(() => {
+              if (!authUser || typeof window === 'undefined') return null
+              try {
+                const raw = localStorage.getItem('sabor_active_comanda')
+                if (!raw) return null
+                const ctx = JSON.parse(raw)
+                if (ctx?.userId !== authUser.id) return null
+                return (
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      <Utensils className="h-4 w-4 text-emerald-300" />
+                      <span><strong className="text-emerald-300">Comanda aberta · Mesa {ctx.table}</strong> — novos itens serão adicionados à mesma conta.</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Link href={`/comanda/${ctx.comandaId}`}>
+                        <Button size="sm" variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-200">Ver conta</Button>
+                      </Link>
+                      <Button size="sm" variant="outline" className="border-white/10" onClick={() => { localStorage.removeItem('sabor_active_comanda'); setTableNumber(''); toast.info('Contexto da comanda removido'); }}>
+                        Sair
+                      </Button>
+                    </div>
+                  </div>
+                )
+              } catch { return null }
+            })()}
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input

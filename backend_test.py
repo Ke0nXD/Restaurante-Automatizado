@@ -1,602 +1,384 @@
 #!/usr/bin/env python3
 """
-Comprehensive backend testing for Sabor & Arte restaurant app
-Testing new features and regression tests as requested
+Backend regression test for comanda-related endpoints
+Testing the specific scenarios requested in the review.
 """
 
 import requests
 import json
-import base64
 import time
-import os
+import sys
+from typing import Dict, Any, Optional
 
 # Configuration
-BASE_URL = "https://dine-in-ordering.preview.emergentagent.com"
-API_URL = f"{BASE_URL}/api"
-
-# Test credentials
+BASE_URL = "https://dine-in-ordering.preview.emergentagent.com/api"
 ADMIN_EMAIL = "admin@sabor.com"
 ADMIN_PASSWORD = "admin123"
+CUSTOMER_EMAIL = "joao_val@teste.com"
+CUSTOMER_PASSWORD = "123456"
 
-# Test data
-TEST_EMAIL = "novo_test@teste.com"
-TEST_PHONE = "(11) 99999-8888"
-TEST_PASSWORD = "test123"
-TEST_NAME = "Test User"
-
-# Simple 1x1 pixel PNG in base64
-TEST_IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
-
-class BackendTester:
+class TestRunner:
     def __init__(self):
         self.admin_token = None
-        self.test_user_token = None
+        self.customer_token = None
         self.test_results = []
         
-    def log_test(self, test_name, success, details=""):
+    def log_test(self, test_name: str, success: bool, details: str = ""):
         """Log test result"""
         status = "✅ PASS" if success else "❌ FAIL"
         print(f"{status} {test_name}")
         if details:
-            print(f"    {details}")
+            print(f"   {details}")
         self.test_results.append({
             "test": test_name,
             "success": success,
             "details": details
         })
         
-    def get_admin_token(self):
-        """Get admin authentication token"""
+    def make_request(self, method: str, endpoint: str, data: Dict = None, 
+                    headers: Dict = None, token: str = None) -> requests.Response:
+        """Make HTTP request with proper headers"""
+        url = f"{BASE_URL}{endpoint}"
+        req_headers = {"Content-Type": "application/json"}
+        
+        if headers:
+            req_headers.update(headers)
+            
+        if token:
+            req_headers["Authorization"] = f"Bearer {token}"
+            
         try:
-            response = requests.post(f"{API_URL}/auth/login", json={
+            if method.upper() == "GET":
+                response = requests.get(url, headers=req_headers, timeout=10)
+            elif method.upper() == "POST":
+                response = requests.post(url, json=data, headers=req_headers, timeout=10)
+            elif method.upper() == "PATCH":
+                response = requests.patch(url, json=data, headers=req_headers, timeout=10)
+            elif method.upper() == "DELETE":
+                response = requests.delete(url, headers=req_headers, timeout=10)
+            else:
+                raise ValueError(f"Unsupported method: {method}")
+                
+            return response
+        except Exception as e:
+            print(f"Request failed: {e}")
+            raise
+            
+    def login_admin(self) -> bool:
+        """Login as admin and get token"""
+        try:
+            response = self.make_request("POST", "/auth/login", {
                 "email": ADMIN_EMAIL,
                 "password": ADMIN_PASSWORD
             })
+            
             if response.status_code == 200:
-                self.admin_token = response.json()["token"]
+                data = response.json()
+                self.admin_token = data.get("token")
                 self.log_test("Admin login", True, f"Token obtained")
                 return True
             else:
-                self.log_test("Admin login", False, f"Status: {response.status_code}, Response: {response.text}")
+                self.log_test("Admin login", False, f"Status: {response.status_code}")
                 return False
         except Exception as e:
-            self.log_test("Admin login", False, f"Exception: {str(e)}")
+            self.log_test("Admin login", False, f"Error: {e}")
             return False
             
-    def test_email_validation(self):
-        """Test 1: Email validation in register and login"""
-        print("\n=== Testing Email Validation ===")
-        
-        # Test invalid emails in register
-        invalid_emails = ["joao", "joao@", "@gmail.com"]
-        for email in invalid_emails:
-            try:
-                response = requests.post(f"{API_URL}/auth/register", json={
-                    "email": email,
-                    "password": TEST_PASSWORD,
-                    "name": TEST_NAME,
-                    "phone": TEST_PHONE
-                })
-                if response.status_code == 400 and "email válido" in response.json().get("error", "").lower():
-                    self.log_test(f"Register with invalid email '{email}'", True, "Correctly rejected")
-                else:
-                    self.log_test(f"Register with invalid email '{email}'", False, f"Status: {response.status_code}, Response: {response.text}")
-            except Exception as e:
-                self.log_test(f"Register with invalid email '{email}'", False, f"Exception: {str(e)}")
-        
-        # Test valid email in register
+    def login_customer(self) -> bool:
+        """Login as customer and get token"""
         try:
-            response = requests.post(f"{API_URL}/auth/register", json={
-                "email": TEST_EMAIL,
-                "password": TEST_PASSWORD,
-                "name": TEST_NAME,
-                "phone": TEST_PHONE
+            response = self.make_request("POST", "/auth/login", {
+                "email": CUSTOMER_EMAIL,
+                "password": CUSTOMER_PASSWORD
             })
-            if response.status_code == 201:
-                data = response.json()
-                if "token" in data and "user" in data:
-                    self.test_user_token = data["token"]
-                    self.log_test("Register with valid email", True, f"User created with token")
-                else:
-                    self.log_test("Register with valid email", False, "Missing token or user in response")
-            else:
-                self.log_test("Register with valid email", False, f"Status: {response.status_code}, Response: {response.text}")
-        except Exception as e:
-            self.log_test("Register with valid email", False, f"Exception: {str(e)}")
-        
-        # Test invalid email in login
-        try:
-            response = requests.post(f"{API_URL}/auth/login", json={
-                "email": "inválido",
-                "password": "anypassword"
-            })
-            if response.status_code == 400 and "email válido" in response.json().get("error", "").lower():
-                self.log_test("Login with invalid email", True, "Correctly rejected")
-            else:
-                self.log_test("Login with invalid email", False, f"Status: {response.status_code}, Response: {response.text}")
-        except Exception as e:
-            self.log_test("Login with invalid email", False, f"Exception: {str(e)}")
-        
-        # Test valid email login
-        try:
-            response = requests.post(f"{API_URL}/auth/login", json={
-                "email": TEST_EMAIL,
-                "password": TEST_PASSWORD
-            })
+            
             if response.status_code == 200:
                 data = response.json()
-                if "token" in data:
-                    self.log_test("Login with valid email", True, "Login successful")
-                else:
-                    self.log_test("Login with valid email", False, "Missing token in response")
+                self.customer_token = data.get("token")
+                self.log_test("Customer login", True, f"Token obtained")
+                return True
             else:
-                self.log_test("Login with valid email", False, f"Status: {response.status_code}, Response: {response.text}")
+                self.log_test("Customer login", False, f"Status: {response.status_code}")
+                return False
         except Exception as e:
-            self.log_test("Login with valid email", False, f"Exception: {str(e)}")
-    
-    def test_phone_validation(self):
-        """Test 2: Phone validation in registration"""
-        print("\n=== Testing Phone Validation ===")
-        
-        # Test register without phone
+            self.log_test("Customer login", False, f"Error: {e}")
+            return False
+            
+    def test_get_comanda_public(self, comanda_id: str) -> bool:
+        """Test GET /api/comandas/:id (public endpoint)"""
         try:
-            response = requests.post(f"{API_URL}/auth/register", json={
-                "email": "test_no_phone@test.com",
-                "password": TEST_PASSWORD,
-                "name": TEST_NAME
-            })
-            if response.status_code == 400:
-                self.log_test("Register without phone", True, "Correctly rejected")
-            else:
-                self.log_test("Register without phone", False, f"Status: {response.status_code}, Response: {response.text}")
-        except Exception as e:
-            self.log_test("Register without phone", False, f"Exception: {str(e)}")
-        
-        # Test register with short phone
-        try:
-            response = requests.post(f"{API_URL}/auth/register", json={
-                "email": "test_short_phone@test.com",
-                "password": TEST_PASSWORD,
-                "name": TEST_NAME,
-                "phone": "12345"
-            })
-            if response.status_code == 400:
-                self.log_test("Register with short phone", True, "Correctly rejected")
-            else:
-                self.log_test("Register with short phone", False, f"Status: {response.status_code}, Response: {response.text}")
-        except Exception as e:
-            self.log_test("Register with short phone", False, f"Exception: {str(e)}")
-        
-        # Test register with formatted phone
-        try:
-            response = requests.post(f"{API_URL}/auth/register", json={
-                "email": "test_formatted_phone@test.com",
-                "password": TEST_PASSWORD,
-                "name": TEST_NAME,
-                "phone": "(11) 99999-8888"
-            })
-            if response.status_code == 201:
-                data = response.json()
-                user = data.get("user", {})
-                if user.get("phone") == "11999998888":  # Should be normalized
-                    self.log_test("Register with formatted phone", True, f"Phone normalized to: {user.get('phone')}")
-                else:
-                    self.log_test("Register with formatted phone", False, f"Phone not normalized correctly: {user.get('phone')}")
-            else:
-                self.log_test("Register with formatted phone", False, f"Status: {response.status_code}, Response: {response.text}")
-        except Exception as e:
-            self.log_test("Register with formatted phone", False, f"Exception: {str(e)}")
-    
-    def test_footer_settings(self):
-        """Test 3: Footer settings endpoints"""
-        print("\n=== Testing Footer Settings ===")
-        
-        # Test public GET /api/footer
-        try:
-            response = requests.get(f"{API_URL}/footer")
+            response = self.make_request("GET", f"/comandas/{comanda_id}")
+            
             if response.status_code == 200:
                 data = response.json()
-                required_fields = ["address", "phone", "whatsapp", "openingHours", "instagramUrl", "deliveryNotice", "copyrightText"]
-                has_all_fields = all(field in data for field in required_fields)
-                if has_all_fields:
-                    self.log_test("GET /api/footer (public)", True, "All required fields present")
-                else:
-                    missing = [f for f in required_fields if f not in data]
-                    self.log_test("GET /api/footer (public)", False, f"Missing fields: {missing}")
+                has_orders = "orders" in data and isinstance(data["orders"], list)
+                self.log_test("GET /api/comandas/:id (public)", True, 
+                            f"Comanda returned with {len(data.get('orders', []))} orders")
+                return True
             else:
-                self.log_test("GET /api/footer (public)", False, f"Status: {response.status_code}")
+                self.log_test("GET /api/comandas/:id (public)", False, 
+                            f"Status: {response.status_code}")
+                return False
         except Exception as e:
-            self.log_test("GET /api/footer (public)", False, f"Exception: {str(e)}")
-        
-        if not self.admin_token:
-            self.log_test("Footer admin tests", False, "No admin token available")
-            return
-        
-        # Test admin GET /api/admin/footer
+            self.log_test("GET /api/comandas/:id (public)", False, f"Error: {e}")
+            return False
+            
+    def test_request_payment(self, comanda_id: str, method: str = "Pix") -> bool:
+        """Test POST /api/comandas/:id/request-payment"""
         try:
-            headers = {"Authorization": f"Bearer {self.admin_token}"}
-            response = requests.get(f"{API_URL}/admin/footer", headers=headers)
-            if response.status_code == 200:
-                self.log_test("GET /api/admin/footer (admin)", True, "Admin access successful")
-            else:
-                self.log_test("GET /api/admin/footer (admin)", False, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_test("GET /api/admin/footer (admin)", False, f"Exception: {str(e)}")
-        
-        # Test PATCH /api/admin/footer
-        try:
-            headers = {"Authorization": f"Bearer {self.admin_token}"}
-            update_data = {
-                "address": "Nova Rua 999",
-                "phone": "(11) 4000-0000"
-            }
-            response = requests.patch(f"{API_URL}/admin/footer", headers=headers, json=update_data)
+            response = self.make_request("POST", f"/comandas/{comanda_id}/request-payment", {
+                "method": method
+            })
+            
             if response.status_code == 200:
                 data = response.json()
-                if data.get("address") == "Nova Rua 999" and data.get("phone") == "(11) 4000-0000":
-                    self.log_test("PATCH /api/admin/footer (admin)", True, "Footer updated successfully")
-                else:
-                    self.log_test("PATCH /api/admin/footer (admin)", False, "Data not updated correctly")
+                status_ok = data.get("status") == "aguardando_pagamento"
+                method_ok = data.get("paymentMethod") == method
+                
+                success = status_ok and method_ok
+                details = f"Status: {data.get('status')}, PaymentMethod: {data.get('paymentMethod')}"
+                self.log_test("POST /api/comandas/:id/request-payment", success, details)
+                return success
             else:
-                self.log_test("PATCH /api/admin/footer (admin)", False, f"Status: {response.status_code}")
+                self.log_test("POST /api/comandas/:id/request-payment", False, 
+                            f"Status: {response.status_code}")
+                return False
         except Exception as e:
-            self.log_test("PATCH /api/admin/footer (admin)", False, f"Exception: {str(e)}")
-        
-        # Test without auth
+            self.log_test("POST /api/comandas/:id/request-payment", False, f"Error: {e}")
+            return False
+            
+    def test_me_comandas_no_auth(self) -> bool:
+        """Test GET /api/me/comandas without auth (should return 401)"""
         try:
-            response = requests.patch(f"{API_URL}/admin/footer", json={"address": "test"})
+            response = self.make_request("GET", "/me/comandas")
+            
             if response.status_code == 401:
-                self.log_test("PATCH /api/admin/footer (no auth)", True, "Correctly rejected")
+                self.log_test("GET /api/me/comandas (no auth)", True, "Correctly returned 401")
+                return True
             else:
-                self.log_test("PATCH /api/admin/footer (no auth)", False, f"Status: {response.status_code}")
+                self.log_test("GET /api/me/comandas (no auth)", False, 
+                            f"Expected 401, got {response.status_code}")
+                return False
         except Exception as e:
-            self.log_test("PATCH /api/admin/footer (no auth)", False, f"Exception: {str(e)}")
-    
-    def test_upload_endpoint(self):
-        """Test 4: Upload endpoint"""
-        print("\n=== Testing Upload Endpoint ===")
-        
-        # Test without auth
+            self.log_test("GET /api/me/comandas (no auth)", False, f"Error: {e}")
+            return False
+            
+    def test_me_comandas_with_auth(self) -> tuple[bool, list]:
+        """Test GET /api/me/comandas with customer auth"""
         try:
-            response = requests.post(f"{API_URL}/upload", json={
-                "dataUrl": f"data:image/png;base64,{TEST_IMAGE_BASE64}"
-            })
-            if response.status_code == 401:
-                self.log_test("POST /api/upload (no auth)", True, "Correctly rejected")
-            else:
-                self.log_test("POST /api/upload (no auth)", False, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_test("POST /api/upload (no auth)", False, f"Exception: {str(e)}")
-        
-        if not self.admin_token:
-            self.log_test("Upload admin tests", False, "No admin token available")
-            return
-        
-        # Test with valid dataUrl
-        try:
-            headers = {"Authorization": f"Bearer {self.admin_token}"}
-            response = requests.post(f"{API_URL}/upload", headers=headers, json={
-                "dataUrl": f"data:image/png;base64,{TEST_IMAGE_BASE64}"
-            })
-            if response.status_code == 201:
+            response = self.make_request("GET", "/me/comandas", token=self.customer_token)
+            
+            if response.status_code == 200:
                 data = response.json()
-                if "url" in data and data["url"].startswith("/uploads/"):
-                    upload_url = data["url"]
-                    self.log_test("POST /api/upload (valid dataUrl)", True, f"File uploaded: {upload_url}")
-                    
-                    # Test if file is accessible
-                    try:
-                        file_response = requests.get(f"{BASE_URL}{upload_url}")
-                        if file_response.status_code == 200:
-                            self.log_test("GET uploaded file", True, "File accessible")
-                        else:
-                            self.log_test("GET uploaded file", False, f"Status: {file_response.status_code}")
-                    except Exception as e:
-                        self.log_test("GET uploaded file", False, f"Exception: {str(e)}")
-                else:
-                    self.log_test("POST /api/upload (valid dataUrl)", False, "Missing or invalid URL in response")
+                comandas = data if isinstance(data, list) else []
+                self.log_test("GET /api/me/comandas (with auth)", True, 
+                            f"Returned {len(comandas)} comandas")
+                return True, comandas
             else:
-                self.log_test("POST /api/upload (valid dataUrl)", False, f"Status: {response.status_code}, Response: {response.text}")
+                self.log_test("GET /api/me/comandas (with auth)", False, 
+                            f"Status: {response.status_code}")
+                return False, []
         except Exception as e:
-            self.log_test("POST /api/upload (valid dataUrl)", False, f"Exception: {str(e)}")
-        
-        # Test with invalid dataUrl
+            self.log_test("GET /api/me/comandas (with auth)", False, f"Error: {e}")
+            return False, []
+            
+    def create_local_order(self, table: str, product_id: str = "p-burger-classic", 
+                          quantity: int = 1) -> Optional[str]:
+        """Create a local order and return the order ID"""
         try:
-            headers = {"Authorization": f"Bearer {self.admin_token}"}
-            response = requests.post(f"{API_URL}/upload", headers=headers, json={
-                "dataUrl": "invalid_data_url"
-            })
-            if response.status_code == 400:
-                self.log_test("POST /api/upload (invalid dataUrl)", True, "Correctly rejected")
+            response = self.make_request("POST", "/orders", {
+                "type": "local",
+                "table": table,
+                "items": [{"productId": product_id, "quantity": quantity}]
+            }, token=self.customer_token)
+            
+            if response.status_code in [200, 201]:
+                data = response.json()
+                order_id = data.get("id")
+                comanda_id = data.get("comandaId")
+                self.log_test("Create local order", True, 
+                            f"Order {order_id} created, comanda: {comanda_id}")
+                return order_id, comanda_id
             else:
-                self.log_test("POST /api/upload (invalid dataUrl)", False, f"Status: {response.status_code}")
+                self.log_test("Create local order", False, 
+                            f"Status: {response.status_code}, Response: {response.text}")
+                return None, None
         except Exception as e:
-            self.log_test("POST /api/upload (invalid dataUrl)", False, f"Exception: {str(e)}")
-    
-    def test_me_comandas(self):
-        """Test 5: /api/me/comandas endpoint"""
-        print("\n=== Testing /api/me/comandas ===")
-        
-        # Test without auth
+            self.log_test("Create local order", False, f"Error: {e}")
+            return None, None
+            
+    def test_comanda_order_fusion(self) -> bool:
+        """Test that multiple orders from same user/table use same comanda"""
         try:
-            response = requests.get(f"{API_URL}/me/comandas")
-            if response.status_code == 401:
-                self.log_test("GET /api/me/comandas (no auth)", True, "Correctly rejected")
-            else:
-                self.log_test("GET /api/me/comandas (no auth)", False, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_test("GET /api/me/comandas (no auth)", False, f"Exception: {str(e)}")
-        
-        # Test with user auth
-        if self.test_user_token:
-            try:
-                headers = {"Authorization": f"Bearer {self.test_user_token}"}
-                response = requests.get(f"{API_URL}/me/comandas", headers=headers)
+            # Create first order
+            order1_id, comanda1_id = self.create_local_order("99", "p-burger-classic", 1)
+            if not order1_id:
+                return False
+                
+            time.sleep(1)  # Small delay
+            
+            # Create second order with same table and user
+            order2_id, comanda2_id = self.create_local_order("99", "p-pizza-margherita", 1)
+            if not order2_id:
+                return False
+                
+            # Check if they use the same comanda
+            same_comanda = comanda1_id == comanda2_id
+            self.log_test("Comanda order fusion", same_comanda, 
+                        f"Order1 comanda: {comanda1_id}, Order2 comanda: {comanda2_id}")
+            
+            if same_comanda:
+                # Verify the comanda has both orders
+                response = self.make_request("GET", f"/comandas/{comanda1_id}")
                 if response.status_code == 200:
                     data = response.json()
-                    if isinstance(data, list):
-                        self.log_test("GET /api/me/comandas (user auth)", True, f"Returned {len(data)} comandas")
-                    else:
-                        self.log_test("GET /api/me/comandas (user auth)", False, "Response is not a list")
-                else:
-                    self.log_test("GET /api/me/comandas (user auth)", False, f"Status: {response.status_code}")
-            except Exception as e:
-                self.log_test("GET /api/me/comandas (user auth)", False, f"Exception: {str(e)}")
+                    orders = data.get("orders", [])
+                    has_both = len(orders) >= 2
+                    self.log_test("Comanda has multiple orders", has_both, 
+                                f"Found {len(orders)} orders in comanda")
+                    return has_both
+                    
+            return same_comanda
+            
+        except Exception as e:
+            self.log_test("Comanda order fusion", False, f"Error: {e}")
+            return False
+            
+    def test_admin_comanda_patch(self, comanda_id: str) -> bool:
+        """Test admin PATCH /api/admin/comandas/:id to mark as paid"""
+        try:
+            response = self.make_request("PATCH", f"/admin/comandas/{comanda_id}", {
+                "action": "pay",
+                "method": "Pix"
+            }, token=self.admin_token)
+            
+            if response.status_code == 200:
+                data = response.json()
+                status_ok = data.get("status") == "paga"
+                self.log_test("Admin PATCH comanda to paid", status_ok, 
+                            f"Status: {data.get('status')}")
+                return status_ok
+            else:
+                # Get error details
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("error", "Unknown error")
+                except:
+                    error_msg = response.text
+                self.log_test("Admin PATCH comanda to paid", False, 
+                            f"Status: {response.status_code}, Error: {error_msg}")
+                return False
+        except Exception as e:
+            self.log_test("Admin PATCH comanda to paid", False, f"Error: {e}")
+            return False
+            
+    def run_complete_flow_test(self) -> bool:
+        """Run the complete flow test as specified"""
+        print("\n=== COMPLETE FLOW TEST ===")
+        
+        # 1. Create local order as logged customer
+        order_id, comanda_id = self.create_local_order("88", "p-burger-classic", 2)
+        if not order_id or not comanda_id:
+            return False
+            
+        # 2. Get comandas via /api/me/comandas
+        success, comandas = self.test_me_comandas_with_auth()
+        if not success:
+            return False
+            
+        # 3. Verify the comanda appears with nested orders
+        found_comanda = None
+        for comanda in comandas:
+            if comanda.get("id") == comanda_id:
+                found_comanda = comanda
+                break
+                
+        if found_comanda:
+            has_orders = "orders" in found_comanda and len(found_comanda["orders"]) > 0
+            self.log_test("Complete flow - comanda with orders", has_orders,
+                        f"Found comanda with {len(found_comanda.get('orders', []))} orders")
+            return has_orders
         else:
-            self.log_test("GET /api/me/comandas (user auth)", False, "No user token available")
-    
-    def test_admin_user_creation_with_phone(self):
-        """Test 6: Admin user creation with phone field"""
-        print("\n=== Testing Admin User Creation with Phone ===")
+            self.log_test("Complete flow - comanda with orders", False,
+                        "Comanda not found in /api/me/comandas response")
+            return False
+            
+    def run_closure_flow_test(self, comanda_id: str) -> bool:
+        """Run the closure flow test"""
+        print("\n=== CLOSURE FLOW TEST ===")
         
-        if not self.admin_token:
-            self.log_test("Admin user creation tests", False, "No admin token available")
-            return
+        # 1. Request payment with PIX
+        payment_success = self.test_request_payment(comanda_id, "Pix")
+        if not payment_success:
+            return False
+            
+        # 2. Admin marks as paid
+        admin_success = self.test_admin_comanda_patch(comanda_id)
+        return admin_success
         
-        # Test creating user with phone
-        try:
-            headers = {"Authorization": f"Bearer {self.admin_token}"}
-            user_data = {
-                "email": "test_attendant@test.com",
-                "password": "attendant123",
-                "name": "Test Attendant",
-                "role": "attendant",
-                "phone": "(11) 98765-4321"
-            }
-            response = requests.post(f"{API_URL}/admin/users", headers=headers, json=user_data)
-            if response.status_code == 201:
-                data = response.json()
-                if data.get("phone") == "11987654321":  # Should be normalized
-                    self.log_test("POST /api/admin/users (with phone)", True, f"User created with normalized phone: {data.get('phone')}")
-                    
-                    # Test login with the new user
-                    try:
-                        login_response = requests.post(f"{API_URL}/auth/login", json={
-                            "email": "test_attendant@test.com",
-                            "password": "attendant123"
-                        })
-                        if login_response.status_code == 200:
-                            self.log_test("Login with new admin user", True, "Login successful")
-                        else:
-                            self.log_test("Login with new admin user", False, f"Status: {login_response.status_code}")
-                    except Exception as e:
-                        self.log_test("Login with new admin user", False, f"Exception: {str(e)}")
-                else:
-                    self.log_test("POST /api/admin/users (with phone)", False, f"Phone not normalized correctly: {data.get('phone')}")
-            else:
-                self.log_test("POST /api/admin/users (with phone)", False, f"Status: {response.status_code}, Response: {response.text}")
-        except Exception as e:
-            self.log_test("POST /api/admin/users (with phone)", False, f"Exception: {str(e)}")
-    
-    def test_regression_bugs(self):
-        """Test 7: Regression tests for previous bugs"""
-        print("\n=== Testing Regression (Previous Bugs) ===")
-        
-        if not self.admin_token:
-            self.log_test("Regression tests", False, "No admin token available")
-            return
-        
-        headers = {"Authorization": f"Bearer {self.admin_token}"}
-        
-        # Test DELETE /api/admin/orders/:id
-        # First create an order to delete
-        try:
-            order_data = {
-                "type": "local",
-                "table": "99",
-                "items": [{"productId": "p-burger-classic", "quantity": 1}],
-                "customer": {"name": "Test Customer"}
-            }
-            create_response = requests.post(f"{API_URL}/orders", json=order_data)
-            if create_response.status_code == 201:
-                order_id = create_response.json()["id"]
-                
-                # Now delete it
-                delete_response = requests.delete(f"{API_URL}/admin/orders/{order_id}", headers=headers)
-                if delete_response.status_code == 200 and delete_response.json().get("ok") == True:
-                    self.log_test("DELETE /api/admin/orders/:id", True, "Order deleted successfully")
-                else:
-                    self.log_test("DELETE /api/admin/orders/:id", False, f"Status: {delete_response.status_code}")
-            else:
-                self.log_test("DELETE /api/admin/orders/:id", False, "Could not create test order")
-        except Exception as e:
-            self.log_test("DELETE /api/admin/orders/:id", False, f"Exception: {str(e)}")
-        
-        # Test DELETE /api/admin/users/:id
-        # First create a user to delete
-        try:
-            user_data = {
-                "email": "delete_test@test.com",
-                "password": "test123",
-                "name": "Delete Test",
-                "role": "attendant"
-            }
-            create_response = requests.post(f"{API_URL}/admin/users", headers=headers, json=user_data)
-            if create_response.status_code == 201:
-                user_id = create_response.json()["id"]
-                
-                # Now delete it
-                delete_response = requests.delete(f"{API_URL}/admin/users/{user_id}", headers=headers)
-                if delete_response.status_code == 200 and delete_response.json().get("ok") == True:
-                    self.log_test("DELETE /api/admin/users/:id", True, "User deleted successfully")
-                else:
-                    self.log_test("DELETE /api/admin/users/:id", False, f"Status: {delete_response.status_code}")
-            else:
-                self.log_test("DELETE /api/admin/users/:id", False, "Could not create test user")
-        except Exception as e:
-            self.log_test("DELETE /api/admin/users/:id", False, f"Exception: {str(e)}")
-        
-        # Test PIX order creation
-        try:
-            order_data = {
-                "type": "delivery",
-                "address": {"street": "Test Street 123", "city": "São Paulo"},
-                "items": [{"productId": "p-burger-classic", "quantity": 1}],
-                "customer": {"name": "PIX Test Customer"},
-                "payment": {"method": "pix"}
-            }
-            response = requests.post(f"{API_URL}/orders", json=order_data)
-            if response.status_code == 201:
-                data = response.json()
-                pix = data.get("pix", {})
-                if all(key in pix for key in ["brCode", "qrDataUrl", "txid", "expiresAt"]):
-                    self.log_test("POST /api/orders (PIX)", True, "PIX order created with all required fields")
-                    
-                    # Test PIX confirmation
-                    order_id = data["id"]
-                    confirm_response = requests.post(f"{API_URL}/orders/{order_id}/pix-confirm", headers=headers)
-                    if confirm_response.status_code == 200:
-                        self.log_test("POST /api/orders/:id/pix-confirm", True, "PIX confirmed successfully")
-                    else:
-                        self.log_test("POST /api/orders/:id/pix-confirm", False, f"Status: {confirm_response.status_code}")
-                    
-                    # Test PIX status
-                    status_response = requests.get(f"{API_URL}/orders/{order_id}/pix-status")
-                    if status_response.status_code == 200:
-                        status_data = status_response.json()
-                        if "status" in status_data and "paymentStatus" in status_data and "orderStatus" in status_data:
-                            self.log_test("GET /api/orders/:id/pix-status", True, "PIX status returned correctly")
-                        else:
-                            self.log_test("GET /api/orders/:id/pix-status", False, "Missing required status fields")
-                    else:
-                        self.log_test("GET /api/orders/:id/pix-status", False, f"Status: {status_response.status_code}")
-                else:
-                    missing = [k for k in ["brCode", "qrDataUrl", "txid", "expiresAt"] if k not in pix]
-                    self.log_test("POST /api/orders (PIX)", False, f"Missing PIX fields: {missing}")
-            else:
-                self.log_test("POST /api/orders (PIX)", False, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_test("POST /api/orders (PIX)", False, f"Exception: {str(e)}")
-        
-        # Test card_delivery order
-        try:
-            order_data = {
-                "type": "delivery",
-                "address": {"street": "Test Street 123", "city": "São Paulo"},
-                "items": [{"productId": "p-burger-classic", "quantity": 1}],
-                "customer": {"name": "Card Test Customer"},
-                "payment": {"method": "card_delivery"}
-            }
-            response = requests.post(f"{API_URL}/orders", json=order_data)
-            if response.status_code == 201:
-                data = response.json()
-                payment = data.get("payment", {})
-                if payment.get("status") == "pendente_entrega" and "pix" not in data:
-                    self.log_test("POST /api/orders (card_delivery)", True, "Card delivery order created correctly")
-                else:
-                    self.log_test("POST /api/orders (card_delivery)", False, f"Incorrect payment status or PIX present: {payment}")
-            else:
-                self.log_test("POST /api/orders (card_delivery)", False, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_test("POST /api/orders (card_delivery)", False, f"Exception: {str(e)}")
-        
-        # Test theme endpoint
-        try:
-            response = requests.get(f"{API_URL}/theme")
-            if response.status_code == 200:
-                data = response.json()
-                if all(key in data for key in ["mode", "brand", "dark", "light"]):
-                    self.log_test("GET /api/theme", True, "Theme data returned correctly")
-                else:
-                    missing = [k for k in ["mode", "brand", "dark", "light"] if k not in data]
-                    self.log_test("GET /api/theme", False, f"Missing theme fields: {missing}")
-            else:
-                self.log_test("GET /api/theme", False, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_test("GET /api/theme", False, f"Exception: {str(e)}")
-        
-        # Test payment methods
-        try:
-            response = requests.get(f"{API_URL}/payment-methods")
-            if response.status_code == 200:
-                data = response.json()
-                if len(data) == 3:
-                    method_ids = [m.get("id") for m in data]
-                    expected = ["pix", "card_delivery", "cash_delivery"]
-                    if all(mid in method_ids for mid in expected):
-                        self.log_test("GET /api/payment-methods", True, "All 3 payment methods present")
-                    else:
-                        self.log_test("GET /api/payment-methods", False, f"Incorrect method IDs: {method_ids}")
-                else:
-                    self.log_test("GET /api/payment-methods", False, f"Expected 3 methods, got {len(data)}")
-            else:
-                self.log_test("GET /api/payment-methods", False, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_test("GET /api/payment-methods", False, f"Exception: {str(e)}")
-        
-        # Test admin PIX config
-        try:
-            response = requests.get(f"{API_URL}/admin/pix-config", headers=headers)
-            if response.status_code == 200:
-                data = response.json()
-                if "provider" in data and "pixKey" in data:
-                    self.log_test("GET /api/admin/pix-config", True, "PIX config returned")
-                else:
-                    self.log_test("GET /api/admin/pix-config", False, "Missing PIX config fields")
-            else:
-                self.log_test("GET /api/admin/pix-config", False, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_test("GET /api/admin/pix-config", False, f"Exception: {str(e)}")
-    
     def run_all_tests(self):
-        """Run all tests"""
-        print("🧪 Starting comprehensive backend testing for Sabor & Arte")
-        print(f"🌐 Base URL: {BASE_URL}")
+        """Run all comanda regression tests"""
+        print("=== COMANDA REGRESSION TESTS ===\n")
         
-        # Get admin token first
-        if not self.get_admin_token():
-            print("❌ Cannot proceed without admin token")
+        # Login first
+        if not self.login_admin():
+            print("Failed to login as admin, aborting tests")
             return
+            
+        if not self.login_customer():
+            print("Failed to login as customer, aborting tests")
+            return
+            
+        print("\n=== BASIC ENDPOINT TESTS ===")
         
-        # Run all test suites
-        self.test_email_validation()
-        self.test_phone_validation()
-        self.test_footer_settings()
-        self.test_upload_endpoint()
-        self.test_me_comandas()
-        self.test_admin_user_creation_with_phone()
-        self.test_regression_bugs()
+        # Test /api/me/comandas without auth
+        self.test_me_comandas_no_auth()
         
-        # Summary
-        print("\n" + "="*60)
-        print("📊 TEST SUMMARY")
-        print("="*60)
+        # Test /api/me/comandas with auth
+        success, comandas = self.test_me_comandas_with_auth()
+        
+        # Test comanda order fusion
+        self.test_comanda_order_fusion()
+        
+        # Run complete flow test
+        self.run_complete_flow_test()
+        
+        # If we have comandas, test other endpoints
+        if comandas:
+            test_comanda_id = comandas[0].get("id")
+            if test_comanda_id:
+                # Test public comanda endpoint
+                self.test_get_comanda_public(test_comanda_id)
+                
+                # Test closure flow
+                self.run_closure_flow_test(test_comanda_id)
+        
+        # Print summary
+        self.print_summary()
+        
+    def print_summary(self):
+        """Print test summary"""
+        print("\n" + "="*50)
+        print("TEST SUMMARY")
+        print("="*50)
         
         passed = sum(1 for r in self.test_results if r["success"])
         total = len(self.test_results)
-        percentage = (passed / total * 100) if total > 0 else 0
         
-        print(f"✅ Passed: {passed}/{total} ({percentage:.1f}%)")
+        print(f"Total tests: {total}")
+        print(f"Passed: {passed}")
+        print(f"Failed: {total - passed}")
+        print(f"Success rate: {(passed/total)*100:.1f}%")
         
-        if passed < total:
-            print(f"❌ Failed: {total - passed}")
-            print("\nFailed tests:")
-            for result in self.test_results:
-                if not result["success"]:
-                    print(f"  • {result['test']}: {result['details']}")
+        # Show failed tests
+        failed_tests = [r for r in self.test_results if not r["success"]]
+        if failed_tests:
+            print("\nFAILED TESTS:")
+            for test in failed_tests:
+                print(f"❌ {test['test']}: {test['details']}")
         
-        print("\n🎯 All new features and regression tests completed!")
+        print("\n" + "="*50)
 
 if __name__ == "__main__":
-    tester = BackendTester()
-    tester.run_all_tests()
+    runner = TestRunner()
+    runner.run_all_tests()
