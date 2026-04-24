@@ -20,10 +20,11 @@ import { useRouter } from 'next/navigation'
 import {
   ShoppingCart, Search, MapPin, Home, ArrowLeft, Plus, Minus, Trash2, ChefHat,
   Utensils, Bike, Check, Clock, CreditCard, Banknote, QrCode, MessageCircle,
-  User, LogIn, LogOut, LayoutDashboard, Eye, Copy, CheckCircle2, Loader2,
+  User, LogIn, LogOut, LayoutDashboard, Eye, Copy, CheckCircle2, Loader2, Receipt,
 } from 'lucide-react'
 import { getUser, getToken, clearAuth, authHeaders } from '@/lib/auth'
 import { useBranding, BrandLogo } from '@/lib/branding'
+import { SiteFooter } from '@/components/site-footer'
 
 const brl = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
@@ -261,6 +262,11 @@ function App() {
                   </Button>
                 </Link>
               )}
+              <Link href="/minha-conta">
+                <Button variant="outline" size="sm" className="border-white/10 bg-white/5">
+                  <Receipt className="mr-1 h-4 w-4" /> Minha conta
+                </Button>
+              </Link>
               <Button variant="outline" size="sm" className="border-white/10 bg-white/5" onClick={() => { clearAuth(); setAuthUser(null); setRecentOrders([]); toast.success('Desconectado') }}>
                 <LogOut className="mr-1 h-4 w-4" /> {authUser.name?.split(' ')[0] || 'Sair'}
               </Button>
@@ -351,6 +357,7 @@ function App() {
             </div>
           )}
         </div>
+        <SiteFooter />
       </main>
     )
   }
@@ -454,6 +461,7 @@ function App() {
               )}
             </CardContent>
           </Card>
+          <SiteFooter />
         </div>
       </main>
     )
@@ -774,6 +782,7 @@ function App() {
           </div>
         </DialogContent>
       </Dialog>
+      <SiteFooter />
     </main>
   )
 }

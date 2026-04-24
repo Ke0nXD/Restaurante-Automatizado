@@ -4,6 +4,19 @@ import { v4 as uuidv4 } from 'uuid'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import QRCode from 'qrcode'
+import fs from 'fs/promises'
+import path from 'path'
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
+function isValidEmail(e) { return typeof e === 'string' && EMAIL_RE.test(e.trim()) }
+function normalizePhone(p) {
+  if (!p) return ''
+  return String(p).replace(/\D/g, '')
+}
+function isValidPhone(p) {
+  const digits = normalizePhone(p)
+  return digits.length >= 10 && digits.length <= 13
+}
 
 const MONGO_URL = process.env.MONGO_URL
 const DB_NAME = process.env.DB_NAME || 'restaurant_app'
@@ -203,6 +216,22 @@ async function ensureSeed(db) {
       updatedAt: new Date().toISOString(),
     })
   }
+
+  // Seed footer settings
+  const footer = await db.collection('settings').findOne({ id: 'footer' })
+  if (!footer) {
+    await db.collection('settings').insertOne({
+      id: 'footer',
+      address: 'Rua dos Sabores, 123 — Jardins, São Paulo/SP',
+      phone: '(11) 3000-0000',
+      whatsapp: '(11) 99999-9999',
+      openingHours: 'Seg–Sex 11h–23h · Sáb–Dom 12h–00h',
+      instagramUrl: 'https://instagram.com/sabor_arte',
+      deliveryNotice: 'Entregamos em um raio de 5 km',
+      copyrightText: '© Sabor & Arte · Todos os direitos reservados',
+      updatedAt: new Date().toISOString(),
+    })
+  }
 }
 
 function stripId(doc) {
@@ -383,6 +412,11 @@ async function handleGet(request, pathParts) {
     return NextResponse.json(stripId(s))
   }
 
+  if (resource === 'footer') {
+    const s = await db.collection('settings').findOne({ id: 'footer' })
+    return NextResponse.json(s ? stripId(s) : {})
+  }
+
   if (resource === 'pix-info') {
     // Public read of non-secret pix info (for UI countdown etc.)
     const s = await db.collection('settings').findOne({ id: 'pix-config' })
@@ -440,6 +474,21 @@ async function handleGet(request, pathParts) {
     if (!user) return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
     const orders = await db.collection('orders').find({ userId: user.id }).sort({ createdAt: -1 }).toArray()
     return NextResponse.json(orders.map(stripId))
+  }
+
+  if (resource === 'me' && id === 'comandas') {
+    const user = getAuthUser(request)
+    if (!user) return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
+    const comandas = await db.collection('comandas').find({ userId: user.id }).sort({ openedAt: -1 }).toArray()
+    // Attach orders for each comanda
+    const ids = comandas.map((c) => c.id)
+    const related = await db.collection('orders').find({ comandaId: { $in: ids } }).toArray()
+    const byComanda = related.reduce((acc, o) => {
+      acc[o.comandaId] = acc[o.comandaId] || []
+      acc[o.comandaId].push(stripId(o))
+      return acc
+    }, {})
+    return NextResponse.json(comandas.map((c) => ({ ...stripId(c), orders: byComanda[c.id] || [] })))
   }
 
   // ===== Admin routes =====
@@ -518,6 +567,10 @@ async function handleGet(request, pathParts) {
       const s = await db.collection('settings').findOne({ id: 'theme' })
       return NextResponse.json(s ? stripId(s) : { mode: 'dark' })
     }
+    if (id === 'footer') {
+      const s = await db.collection('settings').findOne({ id: 'footer' })
+      return NextResponse.json(s ? stripId(s) : {})
+    }
     if (id === 'pix-config') {
       const ownerCheck = await requireOwner(request, db)
       if (ownerCheck.error) return ownerCheck.error
@@ -591,16 +644,57 @@ async function handlePost(request, pathParts) {
   await ensureSeed(db)
   const [resource, id] = pathParts
 
+  // ===== Upload (multipart or base64) =====
+  if (resource === 'upload') {
+    const guard = await requireAdmin(request, db)
+    if (guard.error) return guard.error
+    try {
+      const uploadDir = path.join(process.cwd(), 'public', 'uploads')
+      await fs.mkdir(uploadDir, { recursive: true })
+      const ct = request.headers.get('content-type') || ''
+      let buffer, ext
+      if (ct.includes('multipart/form-data')) {
+        const form = await request.formData()
+        const file = form.get('file')
+        if (!file || typeof file === 'string') return NextResponse.json({ error: 'Arquivo ausente' }, { status: 400 })
+        if (file.size > 5 * 1024 * 1024) return NextResponse.json({ error: 'Arquivo muito grande (máx 5MB)' }, { status: 400 })
+        ext = (file.name?.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5) || 'jpg'
+        buffer = Buffer.from(await file.arrayBuffer())
+      } else {
+        const body = await request.json()
+        const { dataUrl } = body
+        if (!dataUrl || !dataUrl.startsWith('data:')) return NextResponse.json({ error: 'dataUrl inválido' }, { status: 400 })
+        const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/)
+        if (!match) return NextResponse.json({ error: 'Formato base64 inválido' }, { status: 400 })
+        const mime = match[1]
+        ext = (mime.split('/')[1] || 'jpg').toLowerCase().slice(0, 5)
+        buffer = Buffer.from(match[2], 'base64')
+        if (buffer.length > 5 * 1024 * 1024) return NextResponse.json({ error: 'Imagem muito grande (máx 5MB)' }, { status: 400 })
+      }
+      if (!['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'].includes(ext)) ext = 'jpg'
+      const filename = `${uuidv4()}.${ext}`
+      await fs.writeFile(path.join(uploadDir, filename), buffer)
+      return NextResponse.json({ url: `/uploads/${filename}`, size: buffer.length }, { status: 201 })
+    } catch (e) {
+      console.error('Upload error:', e)
+      return NextResponse.json({ error: 'Erro no upload: ' + e.message }, { status: 500 })
+    }
+  }
+
   // Auth
   if (resource === 'auth' && id === 'register') {
-    const { email, password, name } = await request.json()
+    const { email, password, name, phone } = await request.json()
     if (!email || !password) return NextResponse.json({ error: 'Email e senha obrigatórios' }, { status: 400 })
+    if (!isValidEmail(email)) return NextResponse.json({ error: 'Digite um email válido' }, { status: 400 })
+    if (!phone || !isValidPhone(phone)) return NextResponse.json({ error: 'Telefone inválido (mínimo 10 dígitos)' }, { status: 400 })
+    if (String(password).length < 4) return NextResponse.json({ error: 'Senha muito curta' }, { status: 400 })
     const exists = await db.collection('users').findOne({ email: email.toLowerCase() })
     if (exists) return NextResponse.json({ error: 'Email já cadastrado' }, { status: 400 })
     const user = {
       id: uuidv4(),
       email: email.toLowerCase(),
       name: name || email.split('@')[0],
+      phone: normalizePhone(phone),
       passwordHash: bcrypt.hashSync(password, 8),
       role: 'customer',
       createdAt: new Date().toISOString(),
@@ -612,6 +706,7 @@ async function handlePost(request, pathParts) {
 
   if (resource === 'auth' && id === 'login') {
     const { email, password } = await request.json()
+    if (!isValidEmail(email || '')) return NextResponse.json({ error: 'Digite um email válido' }, { status: 400 })
     const user = await db.collection('users').findOne({ email: (email || '').toLowerCase() })
     if (!user || !bcrypt.compareSync(password || '', user.passwordHash)) {
       return NextResponse.json({ error: 'Credenciais inválidas' }, { status: 401 })
@@ -912,8 +1007,9 @@ async function handlePost(request, pathParts) {
     if (id === 'users') {
       const ownerCheck = await requireOwner(request, db)
       if (ownerCheck.error) return ownerCheck.error
-      const { email, password, name, role } = body
+      const { email, password, name, role, phone } = body
       if (!email || !password || !role) return NextResponse.json({ error: 'Email, senha e papel obrigatórios' }, { status: 400 })
+      if (!isValidEmail(email)) return NextResponse.json({ error: 'Digite um email válido' }, { status: 400 })
       if (!['owner_admin', 'attendant', 'delivery_driver'].includes(role)) return NextResponse.json({ error: 'Papel inválido' }, { status: 400 })
       const exists = await db.collection('users').findOne({ email: email.toLowerCase() })
       if (exists) return NextResponse.json({ error: 'Email já cadastrado' }, { status: 400 })
@@ -921,6 +1017,7 @@ async function handlePost(request, pathParts) {
         id: uuidv4(),
         email: email.toLowerCase(),
         name: name || email.split('@')[0],
+        phone: phone ? normalizePhone(phone) : '',
         passwordHash: bcrypt.hashSync(password, 8),
         role,
         createdAt: new Date().toISOString(),
@@ -1081,6 +1178,15 @@ async function handlePatch(request, pathParts) {
       const updated = await db.collection('settings').findOne({ id: 'theme' })
       return NextResponse.json(stripId(updated))
     }
+    if (id === 'footer') {
+      const updates = { updatedAt: new Date().toISOString() }
+      for (const k of ['address', 'phone', 'whatsapp', 'openingHours', 'instagramUrl', 'deliveryNotice', 'copyrightText']) {
+        if (body[k] !== undefined) updates[k] = body[k]
+      }
+      await db.collection('settings').updateOne({ id: 'footer' }, { $set: updates }, { upsert: true })
+      const updated = await db.collection('settings').findOne({ id: 'footer' })
+      return NextResponse.json(stripId(updated))
+    }
     if (id === 'pix-config') {
       const ownerCheck = await requireOwner(request, db)
       if (ownerCheck.error) return ownerCheck.error
@@ -1100,6 +1206,7 @@ async function handlePatch(request, pathParts) {
         updates.role = body.role
       }
       if (body.name) updates.name = body.name
+      if (body.phone !== undefined) updates.phone = normalizePhone(body.phone)
       if (body.password) updates.passwordHash = bcrypt.hashSync(body.password, 8)
       if (Object.keys(updates).length === 0) return NextResponse.json({ error: 'Nada a atualizar' }, { status: 400 })
       await db.collection('users').updateOne({ id: targetId }, { $set: updates })

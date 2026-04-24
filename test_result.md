@@ -189,8 +189,8 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "1.1"
-  test_sequence: 1
+  version: "1.2"
+  test_sequence: 2
   run_ui: false
 
 test_plan:
@@ -206,6 +206,8 @@ agent_communication:
     message: "Feature grande implementada: (1) Editor de Tema com modo claro/escuro/auto, color pickers para paleta + gradiente de marca, preview em tempo real, validação WCAG de contraste. (2) Delivery payment refatorado: PIX (com BRCode + QR generado via lib 'qrcode', status 'aguardando_pagamento'), Cartão na entrega (status 'pendente_entrega'), Dinheiro na entrega. (3) PIX stub completo pronto para integração real (MercadoPago/Efí/Asaas), com endpoints /api/theme, /api/admin/theme, /api/admin/pix-config, /api/orders/:id/pix-confirm, /api/orders/:id/pix-regenerate, /api/orders/:id/pix-status. (4) Página de tracking e página success mostram QR + copia/cola + countdown + polling automático. (5) Admin ganhou botão 'Confirmar PIX manualmente' em pedidos delivery pendentes. Validação backend via curl OK para todos os fluxos."
   - agent: "testing"
     message: "Testei todos os novos endpoints de tema e PIX conforme solicitado. Resultado: 28/29 testes passaram (96.6% sucesso). Todos os endpoints principais funcionam corretamente: GET/PATCH /api/theme, GET/PATCH /api/admin/theme, GET/PATCH /api/admin/pix-config, GET /api/pix-info, GET /api/payment-methods, fluxo completo PIX (criação, confirmação, regeneração), métodos card_delivery/cash_delivery, autorização, regressão. Único problema menor: GET /api/orders/:id/pix-status retorna objeto completo em vez de apenas {status, paymentStatus, orderStatus} devido a ordem de rotas no backend. Funcionalidade PIX está 100% operacional."
+  - agent: "testing"
+    message: "Teste completo de regressão + novos recursos implementados no backend concluído com 100% de sucesso (31/31 testes passaram). Validação de email: funciona corretamente em register/login, rejeita emails inválidos. Phone no registro: campo obrigatório, normaliza formatação (11) 99999-8888 → 11999998888. Footer settings: GET /api/footer público, GET/PATCH /api/admin/footer com auth funcionam. Upload endpoint: POST /api/upload requer auth, aceita dataUrl base64, arquivo acessível via GET. /api/me/comandas: requer auth, retorna lista. Admin user creation: POST /api/admin/users com phone funciona, login subsequente OK. Regressão: todos os bugs anteriores continuam corrigidos (DELETE endpoints, PIX, theme, payment methods, pix-config). Todos os novos recursos estão funcionando perfeitamente."
 
 backend:
   - task: "GET /api/theme (public)"
@@ -342,6 +344,132 @@ backend:
       - working: true
         agent: "testing"
         comment: "Testado: GET /api/payment-methods retorna exatamente 3 métodos [pix, card_delivery, cash_delivery] todos ativos."
+
+  - task: "POST /api/auth/register (validação de email)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Testado: rejeita emails inválidos ('joao', 'joao@', '@gmail.com') com erro 'Digite um email válido'. Aceita email válido e retorna token + user."
+
+  - task: "POST /api/auth/login (validação de email)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Testado: rejeita email inválido com erro 'Digite um email válido'. Login com email válido + senha correta retorna token."
+
+  - task: "POST /api/auth/register (phone obrigatório e normalização)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Testado: rejeita registro sem phone ou com phone curto (<10 dígitos). Normaliza phone '(11) 99999-8888' para '11999998888' no user retornado."
+
+  - task: "GET /api/footer (público)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Testado: retorna todos os campos obrigatórios (address, phone, whatsapp, openingHours, instagramUrl, deliveryNotice, copyrightText)."
+
+  - task: "GET /api/admin/footer (admin auth)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Testado: requer Bearer token admin, retorna mesma estrutura que endpoint público."
+
+  - task: "PATCH /api/admin/footer (admin auth)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Testado: atualiza campos (address, phone) e persiste. Retorna 401 sem auth. Dados atualizados corretamente."
+
+  - task: "POST /api/upload (admin auth + dataUrl)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Testado: requer Bearer admin token. Aceita dataUrl base64 válido, retorna {url: '/uploads/xxx.png'}. Arquivo acessível via GET. Rejeita dataUrl inválido com 400."
+
+  - task: "GET /api/me/comandas (user auth)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Testado: requer Bearer token de user. Retorna lista de comandas (pode ser vazia). Retorna 401 sem auth."
+
+  - task: "POST /api/admin/users (com phone)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Testado: cria usuário admin com phone normalizado '(11) 98765-4321' → '11987654321'. Login subsequente com novo usuário funciona."
+
+  - task: "GET /api/orders/:id/pix-status (corrigido)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Polling endpoint — auto-expira se passou do expiresAt e ainda está pendente."
+      - working: false
+        agent: "testing"
+        comment: "Minor: endpoint retorna objeto order completo em vez de apenas {status, paymentStatus, orderStatus} devido a ordem de rotas no backend. GET /api/orders/:id captura antes de /api/orders/:id/pix-status."
+      - working: true
+        agent: "testing"
+        comment: "Testado: retorna campos status, paymentStatus, orderStatus corretamente. Funcionalidade PIX status funciona perfeitamente."
 
 frontend:
   - task: "ThemeProvider + CSS vars dinâmicas + light/dark/auto"

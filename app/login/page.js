@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -9,25 +9,55 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { toast } from 'sonner'
-import { ChefHat, ArrowLeft } from 'lucide-react'
+import { ArrowLeft, AlertCircle } from 'lucide-react'
 import { setAuth } from '@/lib/auth'
 import { useBranding, BrandLogo } from '@/lib/branding'
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
+function isValidEmail(e) { return EMAIL_RE.test(String(e || '').trim()) }
+function formatPhoneBR(raw) {
+  const d = String(raw || '').replace(/\D/g, '').slice(0, 11)
+  if (d.length <= 2) return d
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`
+}
+function isValidPhone(p) { return String(p || '').replace(/\D/g, '').length >= 10 }
 
 function LoginPage() {
   const router = useRouter()
   const branding = useBranding()
   const [tab, setTab] = useState('login')
   const [loading, setLoading] = useState(false)
-  const [form, setForm] = useState({ email: '', password: '', name: '' })
+  const [form, setForm] = useState({ email: '', password: '', name: '', phone: '' })
+  const [touched, setTouched] = useState({})
+
+  const emailValid = useMemo(() => isValidEmail(form.email), [form.email])
+  const phoneValid = useMemo(() => isValidPhone(form.phone), [form.phone])
+  const emailError = touched.email && form.email && !emailValid ? 'Digite um email válido (ex: nome@dominio.com)' : ''
+  const phoneError = touched.phone && form.phone && !phoneValid ? 'Telefone inválido — informe DDD + número' : ''
+
+  const canSubmit = tab === 'login'
+    ? emailValid && form.password.length >= 4
+    : emailValid && phoneValid && form.password.length >= 4 && form.name.trim().length > 0
 
   const submit = async () => {
+    // Mark all relevant fields as touched for validation feedback
+    setTouched({ email: true, phone: true, password: true, name: true })
+    if (!emailValid) { toast.error('Digite um email válido'); return }
+    if (tab === 'register' && !phoneValid) { toast.error('Telefone inválido'); return }
+    if (form.password.length < 4) { toast.error('Senha muito curta'); return }
+
     setLoading(true)
     try {
       const url = tab === 'login' ? '/api/auth/login' : '/api/auth/register'
+      const payload = tab === 'login'
+        ? { email: form.email.trim(), password: form.password }
+        : { email: form.email.trim(), password: form.password, name: form.name.trim(), phone: form.phone.replace(/\D/g, '') }
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro')
@@ -62,15 +92,24 @@ function LoginPage() {
 
         <Card className="border-white/10 bg-zinc-900/60">
           <CardContent className="p-6">
-            <Tabs value={tab} onValueChange={setTab}>
+            <Tabs value={tab} onValueChange={(v) => { setTab(v); setTouched({}) }}>
               <TabsList className="grid w-full grid-cols-2 bg-black/30">
                 <TabsTrigger value="login">Entrar</TabsTrigger>
                 <TabsTrigger value="register">Cadastrar</TabsTrigger>
               </TabsList>
+
               <TabsContent value="login" className="mt-6 space-y-4">
                 <div>
                   <Label>Email</Label>
-                  <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+                  <Input
+                    type="email"
+                    autoComplete="email"
+                    value={form.email}
+                    onBlur={() => setTouched((t) => ({ ...t, email: true }))}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    className={`mt-1 bg-white/5 ${emailError ? 'border-red-500/60' : 'border-white/10'}`}
+                  />
+                  {emailError && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" /> {emailError}</p>}
                 </div>
                 <div>
                   <Label>Senha</Label>
@@ -80,21 +119,46 @@ function LoginPage() {
                   <strong>Admin demo:</strong> admin@sabor.com / admin123
                 </div>
               </TabsContent>
+
               <TabsContent value="register" className="mt-6 space-y-4">
                 <div>
-                  <Label>Nome</Label>
+                  <Label>Nome completo</Label>
                   <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
                 </div>
                 <div>
                   <Label>Email</Label>
-                  <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+                  <Input
+                    type="email"
+                    autoComplete="email"
+                    value={form.email}
+                    onBlur={() => setTouched((t) => ({ ...t, email: true }))}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    className={`mt-1 bg-white/5 ${emailError ? 'border-red-500/60' : 'border-white/10'}`}
+                  />
+                  {emailError && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" /> {emailError}</p>}
+                </div>
+                <div>
+                  <Label>Telefone (DDD + número)</Label>
+                  <Input
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder="(11) 99999-9999"
+                    value={form.phone}
+                    onBlur={() => setTouched((t) => ({ ...t, phone: true }))}
+                    onChange={(e) => setForm({ ...form, phone: formatPhoneBR(e.target.value) })}
+                    className={`mt-1 bg-white/5 ${phoneError ? 'border-red-500/60' : 'border-white/10'}`}
+                  />
+                  {phoneError && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" /> {phoneError}</p>}
                 </div>
                 <div>
                   <Label>Senha</Label>
                   <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+                  <p className="mt-1 text-[11px] text-muted-foreground">Mínimo 4 caracteres.</p>
                 </div>
               </TabsContent>
-              <Button disabled={loading} onClick={submit} className="mt-6 w-full bg-brand-gradient hover:opacity-90">
+
+              <Button disabled={loading || !canSubmit} onClick={submit} className="mt-6 w-full bg-brand-gradient hover:opacity-90 disabled:opacity-50">
                 {loading ? 'Aguarde...' : tab === 'login' ? 'Entrar' : 'Criar conta'}
               </Button>
             </Tabs>

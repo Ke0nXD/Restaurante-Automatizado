@@ -23,9 +23,10 @@ import {
   Bell, CreditCard, Banknote, QrCode, CheckCircle2, Search, Menu, X, Calendar,
   Sparkles, Image as ImageIcon, Star, Flame, Settings, Upload, Palette, Sun, Moon, Monitor, Copy,
 } from 'lucide-react'
-import { apiFetch, getUser, clearAuth, getToken } from '@/lib/auth'
+import { apiFetch, getUser, clearAuth, getToken, authHeaders } from '@/lib/auth'
 import { refreshBranding, BrandLogo, useBranding } from '@/lib/branding'
 import { useTheme, DEFAULT_THEME, contrastRatio, wcagLabel } from '@/lib/theme'
+import { ImageField } from '@/components/image-field'
 
 const brl = (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const LOCAL_STATUSES = ['Recebido', 'Em preparo', 'Pronto', 'Entregue', 'Finalizado']
@@ -57,6 +58,7 @@ const TABS = [
   { value: 'content', label: 'Conteúdo', Icon: Sparkles, roles: ['owner_admin', 'admin'] },
   { value: 'payments', label: 'Pagamentos', Icon: CreditCard, roles: ['owner_admin', 'admin'] },
   { value: 'theme', label: 'Tema', Icon: Palette, roles: ['owner_admin', 'admin'] },
+  { value: 'footer', label: 'Rodapé', Icon: LayoutDashboard, roles: ['owner_admin', 'admin'] },
   { value: 'settings', label: 'Configurações', Icon: Settings, roles: ['owner_admin', 'admin'] },
   { value: 'users', label: 'Usuários', Icon: Users, roles: ['owner_admin', 'admin'] },
 ]
@@ -626,6 +628,7 @@ function AdminPage() {
           )}
           {tab === 'payments' && isOwner && <PaymentsTab methods={paymentMethodsConfig} onSave={savePaymentMethodsConfig} />}
           {tab === 'theme' && isOwner && <ThemeTab />}
+          {tab === 'footer' && isOwner && <FooterTab />}
         </div>
       </div>
 
@@ -675,7 +678,7 @@ function AdminPage() {
               <div><Label>Preço</Label><Input type="number" step="0.10" value={editProduct.price} onChange={(e) => setEditProduct({ ...editProduct, price: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
               <div><Label>Categoria</Label><Select value={editProduct.categoryId} onValueChange={(v) => setEditProduct({ ...editProduct, categoryId: v })}><SelectTrigger className="mt-1 border-white/10 bg-white/5"><SelectValue /></SelectTrigger><SelectContent>{categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>)}</SelectContent></Select></div>
             </div>
-            <div><Label>URL da imagem</Label><Input value={editProduct.image} onChange={(e) => setEditProduct({ ...editProduct, image: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
+            <div><ImageField label="Imagem" value={editProduct.image} onChange={(v) => setEditProduct({ ...editProduct, image: v })} /></div>
             <div className="flex items-center justify-between rounded-lg border border-white/10 p-3"><Label>Ativo</Label><Switch checked={editProduct.active} onCheckedChange={(v) => setEditProduct({ ...editProduct, active: v })} /></div>
           </div>)}
           <DialogFooter><Button variant="outline" onClick={() => setEditProduct(null)}>Cancelar</Button><Button onClick={() => saveProduct(editProduct)} className="bg-brand-gradient">Salvar</Button></DialogFooter>
@@ -700,7 +703,7 @@ function AdminPage() {
           {editBanner && (<div className="space-y-3">
             <div><Label>Título</Label><Input value={editBanner.title} onChange={(e) => setEditBanner({ ...editBanner, title: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
             <div><Label>Subtítulo</Label><Input value={editBanner.subtitle} onChange={(e) => setEditBanner({ ...editBanner, subtitle: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
-            <div><Label>URL da imagem</Label><Input value={editBanner.image} onChange={(e) => setEditBanner({ ...editBanner, image: e.target.value })} placeholder="https://..." className="mt-1 border-white/10 bg-white/5" /></div>
+            <div><ImageField label="Imagem" value={editBanner.image} onChange={(v) => setEditBanner({ ...editBanner, image: v })} /></div>
             {editBanner.image && <img src={editBanner.image} alt="" className="h-32 w-full rounded-lg object-cover" />}
             <div className="grid grid-cols-2 gap-3">
               <div><Label>Texto do botão (opcional)</Label><Input value={editBanner.buttonText || ''} onChange={(e) => setEditBanner({ ...editBanner, buttonText: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
@@ -719,7 +722,7 @@ function AdminPage() {
           {editPromo && (<div className="space-y-3">
             <div><Label>Título</Label><Input value={editPromo.title} onChange={(e) => setEditPromo({ ...editPromo, title: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
             <div><Label>Descrição</Label><Textarea value={editPromo.description} onChange={(e) => setEditPromo({ ...editPromo, description: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
-            <div><Label>URL da imagem</Label><Input value={editPromo.image} onChange={(e) => setEditPromo({ ...editPromo, image: e.target.value })} placeholder="https://..." className="mt-1 border-white/10 bg-white/5" /></div>
+            <div><ImageField label="Imagem" value={editPromo.image} onChange={(v) => setEditPromo({ ...editPromo, image: v })} /></div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>Preço / texto (ex: R$ 59,90, 30% OFF)</Label><Input value={editPromo.priceText} onChange={(e) => setEditPromo({ ...editPromo, priceText: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
               <div><Label>Ordem</Label><Input type="number" value={editPromo.order} onChange={(e) => setEditPromo({ ...editPromo, order: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
@@ -1092,6 +1095,7 @@ function UsersTab({ users, orders, onSave, onDelete }) {
             <div className="min-w-0">
               <div className="font-medium">{u.name}</div>
               <div className="truncate text-sm text-muted-foreground">{u.email}</div>
+              {u.phone && <div className="truncate text-xs text-muted-foreground">📞 {u.phone}</div>}
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">{userOrders.length} pedidos</span>
@@ -1112,6 +1116,7 @@ function UsersTab({ users, orders, onSave, onDelete }) {
           {editing && (<div className="space-y-3">
             {!editing.id && <div><Label>Email</Label><Input type="email" value={editing.email} onChange={(e) => setEditing({...editing, email: e.target.value})} className="mt-1 border-white/10 bg-white/5" /></div>}
             <div><Label>Nome</Label><Input value={editing.name || ''} onChange={(e) => setEditing({...editing, name: e.target.value})} className="mt-1 border-white/10 bg-white/5" /></div>
+            <div><Label>Telefone</Label><Input type="tel" placeholder="(11) 99999-9999" value={editing.phone || ''} onChange={(e) => setEditing({...editing, phone: e.target.value})} className="mt-1 border-white/10 bg-white/5" /></div>
             <div><Label>Senha {editing.id && <span className="text-xs text-muted-foreground">(deixe em branco para manter)</span>}</Label><Input type="password" value={editing.password || ''} onChange={(e) => setEditing({...editing, password: e.target.value})} className="mt-1 border-white/10 bg-white/5" /></div>
             <div><Label>Papel</Label>
               <Select value={editing.role} onValueChange={(v) => setEditing({...editing, role: v})}>
@@ -1326,6 +1331,70 @@ function StatCard({ icon, label, value, color }) {
   return <Card className={`border bg-gradient-to-br ${c}`}><CardContent className="p-4 sm:p-5"><div className="mb-2 h-6 w-6 sm:h-8 sm:w-8">{icon}</div><div className="text-[10px] uppercase tracking-wider text-muted-foreground sm:text-xs">{label}</div><div className="mt-1 text-lg font-bold sm:text-2xl">{value}</div></CardContent></Card>
 }
 
+function FooterTab() {
+  const [form, setForm] = useState(null)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    apiFetch('/api/admin/footer').then(setForm).catch(() => setForm({}))
+  }, [])
+  const save = async () => {
+    setSaving(true)
+    try {
+      const updated = await apiFetch('/api/admin/footer', { method: 'PATCH', body: JSON.stringify(form) })
+      setForm(updated)
+      toast.success('Rodapé salvo — aplicado imediatamente em todas as páginas')
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+  if (!form) return <div className="py-10 text-center text-muted-foreground">Carregando...</div>
+
+  const fields = [
+    { key: 'address', label: 'Endereço', placeholder: 'Rua, número — bairro, cidade/UF', rows: 2 },
+    { key: 'phone', label: 'Telefone', placeholder: '(11) 3000-0000' },
+    { key: 'whatsapp', label: 'WhatsApp', placeholder: '(11) 99999-9999' },
+    { key: 'openingHours', label: 'Horário de funcionamento', placeholder: 'Seg–Sex 11h–23h · Sáb–Dom 12h–00h', rows: 2 },
+    { key: 'instagramUrl', label: 'Link do Instagram', placeholder: 'https://instagram.com/seu_perfil' },
+    { key: 'deliveryNotice', label: 'Área atendida / aviso de delivery', placeholder: 'Entregamos em um raio de 5 km' },
+    { key: 'copyrightText', label: 'Copyright', placeholder: '© Sabor & Arte · Todos os direitos reservados' },
+  ]
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold">Rodapé do Site</h2>
+        <p className="text-sm text-muted-foreground">Edite as informações exibidas no rodapé público (cardápio e páginas do cliente). Campos vazios são ocultados automaticamente.</p>
+      </div>
+      <Card className="border-white/10 bg-zinc-900/60">
+        <CardContent className="grid gap-4 p-6 md:grid-cols-2">
+          {fields.map((f) => (
+            <div key={f.key} className={f.rows ? 'md:col-span-2' : ''}>
+              <Label className="text-xs">{f.label}</Label>
+              {f.rows ? (
+                <Textarea
+                  rows={f.rows}
+                  value={form[f.key] || ''}
+                  onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                  placeholder={f.placeholder}
+                  className="mt-1 border-white/10 bg-white/5"
+                />
+              ) : (
+                <Input
+                  value={form[f.key] || ''}
+                  onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                  placeholder={f.placeholder}
+                  className="mt-1 border-white/10 bg-white/5"
+                />
+              )}
+            </div>
+          ))}
+          <div className="md:col-span-2 flex justify-end">
+            <Button onClick={save} disabled={saving} className="bg-brand-gradient">{saving ? 'Salvando...' : 'Salvar rodapé'}</Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 function SettingsTab() {
   const current = useBranding()
   const [form, setForm] = useState({ restaurantName: '', slogan: '', logoUrl: '' })
@@ -1339,19 +1408,22 @@ function SettingsTab() {
     })
   }, [])
 
-  const handleLogoUpload = (e) => {
+  const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    if (file.size > 2 * 1024 * 1024) {
-      toast.error('Imagem muito grande (máx 2MB)')
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Imagem muito grande (máx 5MB)')
       return
     }
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      setForm({ ...form, logoUrl: ev.target.result })
-      toast.info('Logo carregada — clique em Salvar para aplicar')
-    }
-    reader.readAsDataURL(file)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/upload', { method: 'POST', headers: { ...authHeaders() }, body: fd })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro no upload')
+      setForm({ ...form, logoUrl: data.url })
+      toast.info('Logo enviada — clique em Salvar para aplicar')
+    } catch (err) { toast.error(err.message) }
   }
 
   const save = async () => {
