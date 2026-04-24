@@ -65,8 +65,15 @@ function App() {
     const u = getUser()
     setAuthUser(u)
     try {
-      const saved = JSON.parse(localStorage.getItem('sabor_recent_orders') || '[]')
-      setRecentOrders(saved)
+      // Recent orders are per-user (keyed by user id). Guests see none.
+      if (u?.id) {
+        const saved = JSON.parse(localStorage.getItem(`sabor_recent_orders_${u.id}`) || '[]')
+        setRecentOrders(saved)
+      } else {
+        setRecentOrders([])
+        // Clean up any legacy shared-cache entry from older versions
+        localStorage.removeItem('sabor_recent_orders')
+      }
       // Restore pending add after login
       if (u) {
         const pending = localStorage.getItem('sabor_pending_add')
@@ -208,8 +215,11 @@ function App() {
         localStorage.setItem('sabor_active_comanda', data.comandaId)
       }
       const recent = [{ id: data.id, type: data.type, total: data.total, createdAt: data.createdAt, comandaId: data.comandaId }, ...recentOrders].slice(0, 5)
-      localStorage.setItem('sabor_recent_orders', JSON.stringify(recent))
-      setRecentOrders(recent)
+      // Only persist per user (guests don't get a history)
+      if (authUser?.id) {
+        localStorage.setItem(`sabor_recent_orders_${authUser.id}`, JSON.stringify(recent))
+        setRecentOrders(recent)
+      }
       setCart([])
       setView('success')
       setCheckoutStep('info')
@@ -251,7 +261,7 @@ function App() {
                   </Button>
                 </Link>
               )}
-              <Button variant="outline" size="sm" className="border-white/10 bg-white/5" onClick={() => { clearAuth(); setAuthUser(null); toast.success('Desconectado') }}>
+              <Button variant="outline" size="sm" className="border-white/10 bg-white/5" onClick={() => { clearAuth(); setAuthUser(null); setRecentOrders([]); toast.success('Desconectado') }}>
                 <LogOut className="mr-1 h-4 w-4" /> {authUser.name?.split(' ')[0] || 'Sair'}
               </Button>
             </>
@@ -318,7 +328,7 @@ function App() {
             Você pode continuar como visitante — faça login para acompanhar seus pedidos.
           </p>
 
-          {recentOrders.length > 0 && (
+          {authUser && recentOrders.length > 0 && (
             <div className="mt-8 w-full max-w-3xl">
               <div className="mb-3 text-xs uppercase tracking-widest text-muted-foreground">Seus pedidos recentes</div>
               <div className="space-y-2">
