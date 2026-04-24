@@ -118,6 +118,13 @@ async function handleGet(request, pathParts) {
     return NextResponse.json(stripId(order))
   }
 
+  if (resource === 'comandas' && id) {
+    const comanda = await db.collection('comandas').findOne({ id })
+    if (!comanda) return NextResponse.json({ error: 'Comanda não encontrada' }, { status: 404 })
+    const orders = await db.collection('orders').find({ comandaId: id }).sort({ createdAt: 1 }).toArray()
+    return NextResponse.json({ ...stripId(comanda), orders: orders.map(stripId) })
+  }
+
   if (resource === 'auth' && id === 'me') {
     const user = getAuthUser(request)
     if (!user) return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
@@ -141,9 +148,22 @@ async function handleGet(request, pathParts) {
     if (id === 'orders') {
       const url = new URL(request.url)
       const type = url.searchParams.get('type')
-      const q = type ? { type } : {}
+      const search = (url.searchParams.get('search') || '').trim()
+      const q = {}
+      if (type) q.type = type
+      if (search) q['customer.name'] = { $regex: search, $options: 'i' }
       const orders = await db.collection('orders').find(q).sort({ createdAt: -1 }).toArray()
       return NextResponse.json(orders.map(stripId))
+    }
+    if (id === 'comandas') {
+      const url = new URL(request.url)
+      const status = url.searchParams.get('status')
+      const search = (url.searchParams.get('search') || '').trim()
+      const q = {}
+      if (status) q.status = status
+      if (search) q['customer.name'] = { $regex: search, $options: 'i' }
+      const comandas = await db.collection('comandas').find(q).sort({ openedAt: -1 }).toArray()
+      return NextResponse.json(comandas.map(stripId))
     }
     if (id === 'products') {
       const products = await db.collection('products').find({}).toArray()
@@ -158,21 +178,34 @@ async function handleGet(request, pathParts) {
       return NextResponse.json(users.map(stripId))
     }
     if (id === 'stats') {
-      const [ordersCount, products, users, todayOrders] = await Promise.all([
+      const now = new Date()
+      const startDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+      const startMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+      const [ordersCount, products, users, dayOrders, monthOrders, openComandas, awaitingPayComandas] = await Promise.all([
         db.collection('orders').countDocuments(),
         db.collection('products').countDocuments(),
         db.collection('users').countDocuments(),
-        db.collection('orders').find({ createdAt: { $gte: new Date(Date.now() - 86400000).toISOString() } }).toArray(),
+        db.collection('orders').find({ createdAt: { $gte: startDay } }).toArray(),
+        db.collection('orders').find({ createdAt: { $gte: startMonth } }).toArray(),
+        db.collection('comandas').countDocuments({ status: 'aberta' }),
+        db.collection('comandas').countDocuments({ status: 'aguardando_pagamento' }),
       ])
-      const todayRevenue = todayOrders.reduce((s, o) => s + (o.total || 0), 0)
-      const pending = todayOrders.filter((o) => !['Finalizado', 'Entregue'].includes(o.status)).length
+      const paymentsByMethod = {}
+      for (const o of dayOrders) {
+        const m = o.payment?.method || '—'
+        paymentsByMethod[m] = (paymentsByMethod[m] || 0) + (o.total || 0)
+      }
       return NextResponse.json({
         totalOrders: ordersCount,
-        todayOrders: todayOrders.length,
-        todayRevenue,
-        pendingOrders: pending,
-        products,
-        users,
+        todayOrders: dayOrders.length,
+        todayRevenue: dayOrders.reduce((s, o) => s + (o.total || 0), 0),
+        pendingOrders: dayOrders.filter((o) => !['Finalizado', 'Entregue'].includes(o.status)).length,
+        monthOrders: monthOrders.length,
+        monthRevenue: monthOrders.reduce((s, o) => s + (o.total || 0), 0),
+        openComandas,
+        awaitingPayComandas,
+        paymentsByMethod,
+        products, users,
       })
     }
   }
@@ -231,42 +264,75 @@ async function handlePost(request, pathParts) {
     const snapshotItems = items.map((i) => {
       const p = prodMap[i.productId]
       if (!p) throw new Error(`Produto ${i.productId} inexistente`)
-      return {
-        productId: p.id,
-        name: p.name,
-        price: p.price,
-        image: p.image,
-        quantity: i.quantity,
-        observations: i.observations || '',
-        subtotal: p.price * i.quantity,
-      }
+      return { productId: p.id, name: p.name, price: p.price, image: p.image, quantity: i.quantity, observations: i.observations || '', subtotal: p.price * i.quantity }
     })
 
     const total = snapshotItems.reduce((s, i) => s + i.subtotal, 0)
     const initialStatus = type === 'local' ? 'Recebido' : 'Aguardando confirmação'
+    const now = new Date().toISOString()
 
-    const order = {
-      id: uuidv4(),
-      type,
-      userId: authed?.id || null,
-      customer: customer || { name: 'Visitante' },
-      items: snapshotItems,
-      total,
-      notes: notes || '',
-      status: initialStatus,
-      statusHistory: [{ status: initialStatus, at: new Date().toISOString() }],
-      createdAt: new Date().toISOString(),
-    }
+    let comandaId = null
     if (type === 'local') {
       if (!table) return NextResponse.json({ error: 'Número da mesa obrigatório' }, { status: 400 })
+      // Find open comanda for this table
+      const custName = customer?.name || 'Visitante'
+      let comanda = await db.collection('comandas').findOne({
+        table: String(table), status: { $in: ['aberta', 'aguardando_pagamento'] }
+      })
+      if (!comanda) {
+        comanda = {
+          id: uuidv4(), table: String(table),
+          customer: { name: custName, phone: customer?.phone || '' },
+          userId: authed?.id || null,
+          status: 'aberta', paymentMethod: null, paymentStatus: 'pendente',
+          total: 0, orderIds: [],
+          openedAt: now, closedAt: null, paidAt: null,
+        }
+        await db.collection('comandas').insertOne(comanda)
+      }
+      comandaId = comanda.id
+    }
+
+    const order = {
+      id: uuidv4(), type, userId: authed?.id || null, comandaId,
+      customer: customer || { name: 'Visitante' },
+      items: snapshotItems, total, notes: notes || '',
+      status: initialStatus,
+      statusHistory: [{ status: initialStatus, at: now }],
+      createdAt: now,
+    }
+    if (type === 'local') {
       order.table = String(table)
     } else {
       if (!address?.street) return NextResponse.json({ error: 'Endereço obrigatório' }, { status: 400 })
       order.address = address
-      order.payment = { method: payment?.method || 'Pix', status: 'Pendente (simulado)' }
+      order.payment = { method: payment?.method || 'Pix', status: 'Pendente' }
     }
     await db.collection('orders').insertOne(order)
-    return NextResponse.json(stripId(order), { status: 201 })
+
+    if (comandaId) {
+      await db.collection('comandas').updateOne(
+        { id: comandaId },
+        { $inc: { total }, $push: { orderIds: order.id } }
+      )
+    }
+    return NextResponse.json({ ...stripId(order), comandaId }, { status: 201 })
+  }
+
+  // Customer requests payment for comanda
+  if (resource === 'comandas' && id && pathParts[2] === 'request-payment') {
+    const body = await request.json()
+    const method = body.method
+    if (!['Pix', 'Cartão', 'Dinheiro'].includes(method)) return NextResponse.json({ error: 'Método inválido' }, { status: 400 })
+    const comanda = await db.collection('comandas').findOne({ id })
+    if (!comanda) return NextResponse.json({ error: 'Comanda não encontrada' }, { status: 404 })
+    if (comanda.status === 'paga' || comanda.status === 'fechada') return NextResponse.json({ error: 'Comanda já finalizada' }, { status: 400 })
+    await db.collection('comandas').updateOne(
+      { id },
+      { $set: { status: 'aguardando_pagamento', paymentMethod: method, paymentRequestedAt: new Date().toISOString() } }
+    )
+    const updated = await db.collection('comandas').findOne({ id })
+    return NextResponse.json(stripId(updated))
   }
 
   // Admin create
@@ -336,6 +402,20 @@ async function handlePatch(request, pathParts) {
       const updated = await db.collection('products').findOne({ id: targetId })
       return NextResponse.json(stripId(updated))
     }
+    if (id === 'payments' && targetId) {
+      const order = await db.collection('orders').findOne({ id: targetId })
+      if (!order) return NextResponse.json({ error: 'Pedido não encontrado' }, { status: 404 })
+      const method = body.method || order.payment?.method || 'Dinheiro'
+      const paidAt = new Date().toISOString()
+      const payment = { method, status: 'Pago', paidAt }
+      const entry = { status: 'Pago', at: paidAt, note: `Pagamento via ${method}` }
+      await db.collection('orders').updateOne(
+        { id: targetId },
+        { $set: { payment }, $push: { statusHistory: entry } }
+      )
+      const updated = await db.collection('orders').findOne({ id: targetId })
+      return NextResponse.json(stripId(updated))
+    }
     if (id === 'categories' && targetId) {
       const updates = {}
       for (const k of ['name', 'icon', 'order']) {
@@ -343,6 +423,24 @@ async function handlePatch(request, pathParts) {
       }
       await db.collection('categories').updateOne({ id: targetId }, { $set: updates })
       const updated = await db.collection('categories').findOne({ id: targetId })
+      return NextResponse.json(stripId(updated))
+    }
+    if (id === 'comandas' && targetId) {
+      const comanda = await db.collection('comandas').findOne({ id: targetId })
+      if (!comanda) return NextResponse.json({ error: 'Comanda não encontrada' }, { status: 404 })
+      const now = new Date().toISOString()
+      const action = body.action // 'pay' | 'close'
+      if (action === 'pay') {
+        const method = body.method || comanda.paymentMethod || 'Dinheiro'
+        await db.collection('comandas').updateOne({ id: targetId }, { $set: { status: 'paga', paymentStatus: 'pago', paymentMethod: method, paidAt: now, closedAt: now } })
+      } else if (action === 'close') {
+        await db.collection('comandas').updateOne({ id: targetId }, { $set: { status: 'fechada', closedAt: now } })
+      } else if (action === 'reopen') {
+        await db.collection('comandas').updateOne({ id: targetId }, { $set: { status: 'aberta' } })
+      } else {
+        return NextResponse.json({ error: 'Ação inválida' }, { status: 400 })
+      }
+      const updated = await db.collection('comandas').findOne({ id: targetId })
       return NextResponse.json(stripId(updated))
     }
   }

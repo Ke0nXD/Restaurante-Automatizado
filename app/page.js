@@ -162,8 +162,10 @@ function App() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro ao enviar pedido')
       setCompletedOrder(data)
-      // Save to recent orders
-      const recent = [{ id: data.id, type: data.type, total: data.total, createdAt: data.createdAt }, ...recentOrders].slice(0, 5)
+      if (data.comandaId) {
+        localStorage.setItem('sabor_active_comanda', data.comandaId)
+      }
+      const recent = [{ id: data.id, type: data.type, total: data.total, createdAt: data.createdAt, comandaId: data.comandaId }, ...recentOrders].slice(0, 5)
       localStorage.setItem('sabor_recent_orders', JSON.stringify(recent))
       setRecentOrders(recent)
       setCart([])
@@ -377,6 +379,20 @@ function App() {
                   </Button>
                 </Link>
               </div>
+              {isLocal && completedOrder.comandaId && (
+                <div className="mt-4 space-y-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                  <div className="text-xs uppercase tracking-widest text-emerald-400">🟢 Comanda aberta</div>
+                  <p className="text-sm text-muted-foreground">Você pode continuar pedindo. A conta é fechada no final quando você solicitar.</p>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button onClick={() => { setView('menu'); setCompletedOrder(null) }} variant="outline" className="flex-1 border-white/20">
+                      <Plus className="mr-1 h-4 w-4" /> Adicionar mais itens
+                    </Button>
+                    <Button onClick={() => { setCheckoutStep('pay-comanda'); setView('checkout') }} className="flex-1 bg-gradient-to-r from-emerald-500 to-green-600">
+                      Pedir a conta 💳
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -676,6 +692,9 @@ function CheckoutView({
         <ArrowLeft className="mr-1 h-4 w-4" /> Voltar ao cardápio
       </Button>
 
+      {checkoutStep === 'pay-comanda' ? (
+        <PayComandaStep onBack={onBack} />
+      ) : (
       <Card className="border-white/10 bg-zinc-900/60">
         <CardContent className="p-6">
           {orderType === 'local' ? (
@@ -834,7 +853,91 @@ function CheckoutView({
           </div>
         </CardContent>
       </Card>
+      )}
     </div>
+  )
+}
+
+function PayComandaStep({ onBack }) {
+  const [comanda, setComanda] = useState(null)
+  const [method, setMethod] = useState('Pix')
+  const [submitting, setSubmitting] = useState(false)
+  const [requested, setRequested] = useState(false)
+
+  useEffect(() => {
+    const id = localStorage.getItem('sabor_active_comanda')
+    if (!id) return
+    fetch(`/api/comandas/${id}`).then((r) => r.json()).then((d) => {
+      if (d.error) return
+      setComanda(d)
+      if (d.status === 'aguardando_pagamento' || d.status === 'paga') setRequested(true)
+    })
+  }, [])
+
+  const requestPayment = async () => {
+    if (!comanda) return
+    setSubmitting(true)
+    try {
+      const res = await fetch(`/api/comandas/${comanda.id}/request-payment`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setComanda(data); setRequested(true)
+      toast.success('Garçom foi chamado!')
+    } catch (e) { toast.error(e.message) } finally { setSubmitting(false) }
+  }
+
+  if (!comanda) return <Card className="border-white/10 bg-zinc-900/60"><CardContent className="p-8 text-center text-muted-foreground">Nenhuma comanda ativa</CardContent></Card>
+
+  if (requested) {
+    return (
+      <Card className="border-emerald-500/40 bg-emerald-500/5">
+        <CardContent className="p-8 text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
+            <Check className="h-8 w-8" />
+          </div>
+          <h2 className="mb-2 text-2xl font-bold">Garçom chamado!</h2>
+          <p className="text-muted-foreground">
+            {comanda.status === 'paga' ? 'Pagamento confirmado. Obrigado!' : `Aguarde, levaremos a ${comanda.paymentMethod === 'Dinheiro' ? 'maquininha ou receberemos o pagamento' : 'maquininha'} em instantes.`}
+          </p>
+          <div className="mt-6 rounded-xl border border-white/10 bg-black/30 p-4 text-left">
+            <div className="flex justify-between text-sm"><span className="text-muted-foreground">Mesa</span><span className="font-bold">{comanda.table}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-muted-foreground">Forma de pagamento</span><span>{comanda.paymentMethod}</span></div>
+            <div className="mt-2 flex justify-between border-t border-white/5 pt-2"><span className="font-semibold">Total</span><span className="text-xl font-bold text-amber-400">{brl(comanda.total)}</span></div>
+          </div>
+          <Button onClick={onBack} className="mt-6 w-full bg-gradient-to-r from-amber-500 to-orange-600">Voltar ao cardápio</Button>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card className="border-white/10 bg-zinc-900/60">
+      <CardContent className="p-6">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400"><CreditCard className="h-6 w-6" /></div>
+          <div><h2 className="text-xl font-bold">Fechar a conta</h2><p className="text-sm text-muted-foreground">Mesa {comanda.table} · {comanda.orders?.length || 0} pedidos</p></div>
+        </div>
+        <div className="mb-4 rounded-xl border border-white/5 bg-black/30 p-4">
+          <div className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">Resumo da comanda</div>
+          {(comanda.orders || []).flatMap((o) => o.items).map((i, k) => (
+            <div key={k} className="flex justify-between text-sm"><span className="text-muted-foreground">{i.quantity}× {i.name}</span><span>{brl(i.subtotal)}</span></div>
+          ))}
+          <div className="mt-3 flex justify-between border-t border-white/5 pt-3"><span className="font-semibold">Total</span><span className="text-2xl font-bold text-amber-400">{brl(comanda.total)}</span></div>
+        </div>
+        <Label className="mb-2 block">Forma de pagamento</Label>
+        <RadioGroup value={method} onValueChange={setMethod} className="space-y-2">
+          <PaymentOption value="Pix" label="Pix" description="Chamaremos o garçom com o QR Code" icon={<QrCode className="h-5 w-5" />} current={method} />
+          <PaymentOption value="Cartão" label="Cartão" description="Garçom trará a maquininha" icon={<CreditCard className="h-5 w-5" />} current={method} />
+          <PaymentOption value="Dinheiro" label="Dinheiro" description="Garçom receberá o pagamento" icon={<Banknote className="h-5 w-5" />} current={method} />
+        </RadioGroup>
+        <Button disabled={submitting} onClick={requestPayment} size="lg" className="mt-6 w-full bg-gradient-to-r from-emerald-500 to-green-600 text-base font-semibold">
+          {submitting ? 'Chamando...' : '🔔 Chamar garçom para pagamento'}
+        </Button>
+      </CardContent>
+    </Card>
   )
 }
 
