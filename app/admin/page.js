@@ -13,6 +13,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { toast } from 'sonner'
@@ -86,6 +87,12 @@ function AdminPage() {
   const [notifications, setNotifications] = useState([])
   const [notifBellOpen, setNotifBellOpen] = useState(false)
   const beepedIdsRef = useRef(new Set())
+
+  // Confirmation dialog (reliable shadcn replacement for window.confirm)
+  const [confirmState, setConfirmState] = useState({ open: false, title: '', description: '', confirmLabel: 'Confirmar', destructive: false, onConfirm: null })
+  const askConfirm = ({ title, description, confirmLabel = 'Confirmar', destructive = false, onConfirm }) => {
+    setConfirmState({ open: true, title, description, confirmLabel, destructive, onConfirm })
+  }
 
   const playBeep = () => {
     try {
@@ -253,10 +260,19 @@ function AdminPage() {
     } catch (e) { toast.error(e.message) }
   }
   const deleteProduct = async (id) => {
-    if (!confirm('Excluir?')) return
-    await apiFetch(`/api/admin/products/${id}`, { method: 'DELETE' })
-    setProducts((p) => p.filter((x) => x.id !== id))
-    toast.success('Excluído')
+    askConfirm({
+      title: 'Excluir produto?',
+      description: 'Esta ação é permanente. O produto será removido do cardápio.',
+      confirmLabel: 'Excluir',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await apiFetch(`/api/admin/products/${id}`, { method: 'DELETE' })
+          setProducts((p) => p.filter((x) => x.id !== id))
+          toast.success('Produto excluído')
+        } catch (e) { toast.error(e.message) }
+      },
+    })
   }
   const saveCategory = async (c) => {
     try {
@@ -271,9 +287,19 @@ function AdminPage() {
     } catch (e) { toast.error(e.message) }
   }
   const deleteCategory = async (id) => {
-    if (!confirm('Excluir?')) return
-    await apiFetch(`/api/admin/categories/${id}`, { method: 'DELETE' })
-    setCategories((p) => p.filter((x) => x.id !== id))
+    askConfirm({
+      title: 'Excluir categoria?',
+      description: 'Esta ação é permanente.',
+      confirmLabel: 'Excluir',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await apiFetch(`/api/admin/categories/${id}`, { method: 'DELETE' })
+          setCategories((p) => p.filter((x) => x.id !== id))
+          toast.success('Categoria excluída')
+        } catch (e) { toast.error(e.message) }
+      },
+    })
   }
 
   const saveBanner = async (b) => {
@@ -289,10 +315,19 @@ function AdminPage() {
     } catch (e) { toast.error(e.message) }
   }
   const deleteBanner = async (id) => {
-    if (!confirm('Excluir banner?')) return
-    await apiFetch(`/api/admin/banners/${id}`, { method: 'DELETE' })
-    setBanners((p) => p.filter((x) => x.id !== id))
-    toast.success('Excluído')
+    askConfirm({
+      title: 'Excluir banner?',
+      description: 'Esta ação é permanente.',
+      confirmLabel: 'Excluir',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await apiFetch(`/api/admin/banners/${id}`, { method: 'DELETE' })
+          setBanners((p) => p.filter((x) => x.id !== id))
+          toast.success('Banner excluído')
+        } catch (e) { toast.error(e.message) }
+      },
+    })
   }
 
   const savePromo = async (p) => {
@@ -308,10 +343,19 @@ function AdminPage() {
     } catch (e) { toast.error(e.message) }
   }
   const deletePromo = async (id) => {
-    if (!confirm('Excluir promoção?')) return
-    await apiFetch(`/api/admin/promotions/${id}`, { method: 'DELETE' })
-    setPromotions((p) => p.filter((x) => x.id !== id))
-    toast.success('Excluído')
+    askConfirm({
+      title: 'Excluir promoção?',
+      description: 'Esta ação é permanente.',
+      confirmLabel: 'Excluir',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await apiFetch(`/api/admin/promotions/${id}`, { method: 'DELETE' })
+          setPromotions((p) => p.filter((x) => x.id !== id))
+          toast.success('Promoção excluída')
+        } catch (e) { toast.error(e.message) }
+      },
+    })
   }
 
   const toggleFeatured = async (prod) => {
@@ -323,12 +367,19 @@ function AdminPage() {
   }
 
   const deleteOrder = async (orderId) => {
-    if (!confirm('⚠️ Tem certeza que deseja APAGAR este pedido? Esta ação é permanente.')) return
-    try {
-      await apiFetch(`/api/admin/orders/${orderId}`, { method: 'DELETE' })
-      setOrders((prev) => prev.filter((o) => o.id !== orderId))
-      toast.success('Pedido excluído')
-    } catch (e) { toast.error(e.message) }
+    askConfirm({
+      title: 'Apagar este pedido?',
+      description: 'Esta ação é PERMANENTE. O pedido será removido dos relatórios e histórico.',
+      confirmLabel: 'Apagar pedido',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await apiFetch(`/api/admin/orders/${orderId}`, { method: 'DELETE' })
+          setOrders((prev) => prev.filter((o) => o.id !== orderId))
+          toast.success('Pedido excluído')
+        } catch (e) { toast.error(e.message) }
+      },
+    })
   }
 
   const saveDeliveryStatus = async (orderId, deliveryStatus, deliveryObservation) => {
@@ -377,12 +428,20 @@ function AdminPage() {
   }
 
   const deleteUser = async (id) => {
-    if (!confirm('Excluir usuário?')) return
-    try {
-      await apiFetch(`/api/admin/users/${id}`, { method: 'DELETE' })
-      setUsers((prev) => prev.filter((x) => x.id !== id))
-      toast.success('Usuário excluído')
-    } catch (e) { toast.error(e.message) }
+    const target = users.find((u) => u.id === id)
+    askConfirm({
+      title: 'Excluir usuário?',
+      description: target ? `O usuário "${target.name || target.email}" será removido permanentemente do sistema.` : 'Esta ação é permanente.',
+      confirmLabel: 'Excluir usuário',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await apiFetch(`/api/admin/users/${id}`, { method: 'DELETE' })
+          setUsers((prev) => prev.filter((x) => x.id !== id))
+          toast.success('Usuário excluído')
+        } catch (e) { toast.error(e.message) }
+      },
+    })
   }
 
   if (!user) return null
@@ -651,6 +710,33 @@ function AdminPage() {
           <DialogFooter><Button variant="outline" onClick={() => setEditPromo(null)}>Cancelar</Button><Button onClick={() => savePromo(editPromo)} className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Reliable confirmation dialog (replaces window.confirm) */}
+      <AlertDialog open={confirmState.open} onOpenChange={(open) => setConfirmState((s) => ({ ...s, open }))}>
+        <AlertDialogContent className="border-white/10 bg-zinc-950 text-foreground">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmState.title}</AlertDialogTitle>
+            {confirmState.description && (
+              <AlertDialogDescription className="text-muted-foreground">{confirmState.description}</AlertDialogDescription>
+            )}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-white/10 bg-white/5 hover:bg-white/10">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                const fn = confirmState.onConfirm
+                setConfirmState((s) => ({ ...s, open: false }))
+                if (typeof fn === 'function') {
+                  try { await fn() } catch (e) { toast.error(e?.message || 'Erro') }
+                }
+              }}
+              className={confirmState.destructive ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-gradient-to-r from-amber-500 to-orange-600'}
+            >
+              {confirmState.confirmLabel || 'Confirmar'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   )
 }

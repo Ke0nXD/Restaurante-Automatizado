@@ -101,3 +101,104 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  Correção de dois bugs reportados pelo usuário:
+  1) Usuários criados via painel Admin não conseguiam fazer login (reportado).
+  2) Botão "Apagar" pedido não funcionava (Pedidos Locais, Delivery e Histórico) e também não conseguia apagar usuários criados no painel.
+
+backend:
+  - task: "POST /api/admin/users (criar usuário com hash da senha)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Validado via curl: criar usuário attendant + login subsequente funciona (token retornado). passwordHash é salvo corretamente via bcrypt.hashSync na linha 635."
+
+  - task: "DELETE /api/admin/orders/:id"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Validado via curl e via UI: retorna {ok:true}, remove pedido e atualiza comanda."
+
+  - task: "DELETE /api/admin/users/:id"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Validado via curl: retorna {ok:true}, usuário removido e login posterior retorna Credenciais inválidas corretamente."
+
+frontend:
+  - task: "Apagar pedido com confirmação (Pedidos Locais / Delivery / Histórico)"
+    implemented: true
+    working: true
+    file: "app/admin/page.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "user"
+        comment: "Usuário reportou que o botão Apagar não funciona, especialmente no Histórico."
+      - working: true
+        agent: "main"
+        comment: "Substituído window.confirm() por shadcn AlertDialog confiável com estado confirmState. Validado via Playwright: abriu dialog 'Apagar este pedido?' → confirmou com 'Apagar pedido' → lista caiu de 8 para 7 pedidos + toast 'Pedido excluído'."
+
+  - task: "Apagar usuário com confirmação"
+    implemented: true
+    working: true
+    file: "app/admin/page.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "user"
+        comment: "Usuário reportou que não conseguia apagar usuários criados no painel."
+      - working: true
+        agent: "main"
+        comment: "Substituído window.confirm() por shadcn AlertDialog. Validado via Playwright: criou user tmp9366@test.com (login 200 OK), excluiu via UI (trash → 'Excluir usuário') → lista caiu de 6 para 5."
+
+  - task: "Criar usuário via painel Admin"
+    implemented: true
+    working: true
+    file: "app/admin/page.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Validado via Playwright: form em UsersTab criou usuário tmp9366@test.com (role attendant) e login subsequente via API retornou status 200 + token."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 1
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Ambos os bugs foram corrigidos e validados via Playwright + curl. Backend estava OK (senha já era hashada, endpoints DELETE funcionavam). A raiz do problema era no frontend: window.confirm() estava inconsistente em alguns navegadores/contextos. Substituí por shadcn AlertDialog em todas as ações destrutivas (deleteOrder, deleteUser, deleteProduct, deleteCategory, deleteBanner, deletePromo). Aguardando validação do usuário."
