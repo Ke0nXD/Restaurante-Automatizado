@@ -32,7 +32,11 @@ function LoginPage() {
       setAuth(data.token, data.user)
       toast.success(tab === 'login' ? 'Login efetuado!' : 'Cadastro concluído!')
       if (data.user.role === 'admin') router.push('/admin')
-      else router.push('/')
+      else {
+        const redirect = localStorage.getItem('sabor_redirect_after_login') || '/'
+        localStorage.removeItem('sabor_redirect_after_login')
+        router.push(redirect)
+      }
     } catch (e) {
       toast.error(e.message)
     } finally {

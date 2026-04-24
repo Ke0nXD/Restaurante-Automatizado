@@ -20,6 +20,7 @@ import {
   ChefHat, LogOut, LayoutDashboard, Utensils, Bike, ClipboardList, Package,
   Tag, Users, Plus, Pencil, Trash2, Clock, Check, TrendingUp, DollarSign, ShoppingBag,
   Bell, CreditCard, Banknote, QrCode, CheckCircle2, Search, Menu, X, Calendar,
+  Sparkles, Image as ImageIcon, Star, Flame,
 } from 'lucide-react'
 import { apiFetch, getUser, clearAuth, getToken } from '@/lib/auth'
 
@@ -40,6 +41,7 @@ const TABS = [
   { value: 'delivery', label: 'Delivery', Icon: Bike },
   { value: 'products', label: 'Produtos', Icon: Package },
   { value: 'categories', label: 'Categorias', Icon: Tag },
+  { value: 'content', label: 'Conteúdo', Icon: Sparkles },
   { value: 'users', label: 'Clientes', Icon: Users },
 ]
 
@@ -57,6 +59,10 @@ function AdminPage() {
   const [editProduct, setEditProduct] = useState(null)
   const [editCategory, setEditCategory] = useState(null)
   const [payDialog, setPayDialog] = useState(null)
+  const [banners, setBanners] = useState([])
+  const [promotions, setPromotions] = useState([])
+  const [editBanner, setEditBanner] = useState(null)
+  const [editPromo, setEditPromo] = useState(null)
   const [search, setSearch] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [unread, setUnread] = useState(0)
@@ -91,15 +97,18 @@ function AdminPage() {
     setLoading(true)
     try {
       const qs = search ? `?search=${encodeURIComponent(search)}` : ''
-      const [s, o, cmd, p, c, uu] = await Promise.all([
+      const [s, o, cmd, p, c, uu, b, pr] = await Promise.all([
         apiFetch('/api/admin/stats'),
         apiFetch(`/api/admin/orders${qs}`),
         apiFetch(`/api/admin/comandas${qs}`),
         apiFetch('/api/admin/products'),
         apiFetch('/api/admin/categories'),
         apiFetch('/api/admin/users'),
+        apiFetch('/api/admin/banners'),
+        apiFetch('/api/admin/promotions'),
       ])
       setStats(s); setOrders(o); setComandas(cmd); setProducts(p); setCategories(c); setUsers(uu)
+      setBanners(b); setPromotions(pr)
       prevIdsRef.current = {
         orders: new Set(o.map((x) => x.id)),
         pay: new Set(cmd.filter((x) => x.status === 'aguardando_pagamento').map((x) => x.id)),
@@ -201,6 +210,52 @@ function AdminPage() {
     if (!confirm('Excluir?')) return
     await apiFetch(`/api/admin/categories/${id}`, { method: 'DELETE' })
     setCategories((p) => p.filter((x) => x.id !== id))
+  }
+
+  const saveBanner = async (b) => {
+    try {
+      if (b.id) {
+        const u = await apiFetch(`/api/admin/banners/${b.id}`, { method: 'PATCH', body: JSON.stringify(b) })
+        setBanners((prev) => prev.map((x) => x.id === u.id ? u : x).map((x) => u.active && x.id !== u.id ? { ...x, active: false } : x))
+      } else {
+        const c = await apiFetch('/api/admin/banners', { method: 'POST', body: JSON.stringify(b) })
+        setBanners((prev) => (c.active ? prev.map((x) => ({ ...x, active: false })) : prev).concat(c))
+      }
+      toast.success('Banner salvo'); setEditBanner(null)
+    } catch (e) { toast.error(e.message) }
+  }
+  const deleteBanner = async (id) => {
+    if (!confirm('Excluir banner?')) return
+    await apiFetch(`/api/admin/banners/${id}`, { method: 'DELETE' })
+    setBanners((p) => p.filter((x) => x.id !== id))
+    toast.success('Excluído')
+  }
+
+  const savePromo = async (p) => {
+    try {
+      if (p.id) {
+        const u = await apiFetch(`/api/admin/promotions/${p.id}`, { method: 'PATCH', body: JSON.stringify(p) })
+        setPromotions((prev) => prev.map((x) => x.id === u.id ? u : x))
+      } else {
+        const c = await apiFetch('/api/admin/promotions', { method: 'POST', body: JSON.stringify(p) })
+        setPromotions((prev) => [...prev, c])
+      }
+      toast.success('Promoção salva'); setEditPromo(null)
+    } catch (e) { toast.error(e.message) }
+  }
+  const deletePromo = async (id) => {
+    if (!confirm('Excluir promoção?')) return
+    await apiFetch(`/api/admin/promotions/${id}`, { method: 'DELETE' })
+    setPromotions((p) => p.filter((x) => x.id !== id))
+    toast.success('Excluído')
+  }
+
+  const toggleFeatured = async (prod) => {
+    try {
+      const updated = await apiFetch(`/api/admin/products/${prod.id}`, { method: 'PATCH', body: JSON.stringify({ featured: !prod.featured, featuredOrder: prod.featuredOrder || 1 }) })
+      setProducts((prev) => prev.map((x) => x.id === updated.id ? updated : x))
+      toast.success(updated.featured ? 'Adicionado aos destaques' : 'Removido dos destaques')
+    } catch (e) { toast.error(e.message) }
   }
 
   if (!user) return null
@@ -313,6 +368,14 @@ function AdminPage() {
             <CategoriesTab categories={categories} onEdit={setEditCategory} onDelete={deleteCategory} onNew={() => setEditCategory({ name: '', icon: '🍽️', order: categories.length + 1 })} />
           )}
           {tab === 'users' && <UsersTab users={users} orders={orders} />}
+          {tab === 'content' && (
+            <ContentTab
+              banners={banners} promotions={promotions} products={products}
+              onEditBanner={setEditBanner} onDeleteBanner={deleteBanner}
+              onEditPromo={setEditPromo} onDeletePromo={deletePromo}
+              onToggleFeatured={toggleFeatured}
+            />
+          )}
         </div>
       </div>
 
@@ -376,7 +439,128 @@ function AdminPage() {
           <DialogFooter><Button variant="outline" onClick={() => setEditCategory(null)}>Cancelar</Button><Button onClick={() => saveCategory(editCategory)} className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={!!editBanner} onOpenChange={(o) => !o && setEditBanner(null)}>
+        <DialogContent className="border-white/10 bg-zinc-950">
+          <DialogHeader><DialogTitle>{editBanner?.id ? 'Editar' : 'Novo'} banner</DialogTitle></DialogHeader>
+          {editBanner && (<div className="space-y-3">
+            <div><Label>Título</Label><Input value={editBanner.title} onChange={(e) => setEditBanner({ ...editBanner, title: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
+            <div><Label>Subtítulo</Label><Input value={editBanner.subtitle} onChange={(e) => setEditBanner({ ...editBanner, subtitle: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
+            <div><Label>URL da imagem</Label><Input value={editBanner.image} onChange={(e) => setEditBanner({ ...editBanner, image: e.target.value })} placeholder="https://..." className="mt-1 border-white/10 bg-white/5" /></div>
+            {editBanner.image && <img src={editBanner.image} alt="" className="h-32 w-full rounded-lg object-cover" />}
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Texto do botão (opcional)</Label><Input value={editBanner.buttonText || ''} onChange={(e) => setEditBanner({ ...editBanner, buttonText: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
+              <div><Label>Link do botão</Label><Input value={editBanner.buttonLink || ''} onChange={(e) => setEditBanner({ ...editBanner, buttonLink: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-white/10 p-3"><Label>Ativo (aparece no cardápio)</Label><Switch checked={!!editBanner.active} onCheckedChange={(v) => setEditBanner({ ...editBanner, active: v })} /></div>
+            <p className="text-xs text-muted-foreground">⚠️ Apenas um banner pode estar ativo por vez. Ativar este desativa os outros.</p>
+          </div>)}
+          <DialogFooter><Button variant="outline" onClick={() => setEditBanner(null)}>Cancelar</Button><Button onClick={() => saveBanner(editBanner)} className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editPromo} onOpenChange={(o) => !o && setEditPromo(null)}>
+        <DialogContent className="border-white/10 bg-zinc-950">
+          <DialogHeader><DialogTitle>{editPromo?.id ? 'Editar' : 'Nova'} promoção</DialogTitle></DialogHeader>
+          {editPromo && (<div className="space-y-3">
+            <div><Label>Título</Label><Input value={editPromo.title} onChange={(e) => setEditPromo({ ...editPromo, title: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
+            <div><Label>Descrição</Label><Textarea value={editPromo.description} onChange={(e) => setEditPromo({ ...editPromo, description: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
+            <div><Label>URL da imagem</Label><Input value={editPromo.image} onChange={(e) => setEditPromo({ ...editPromo, image: e.target.value })} placeholder="https://..." className="mt-1 border-white/10 bg-white/5" /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Preço / texto (ex: R$ 59,90, 30% OFF)</Label><Input value={editPromo.priceText} onChange={(e) => setEditPromo({ ...editPromo, priceText: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
+              <div><Label>Ordem</Label><Input type="number" value={editPromo.order} onChange={(e) => setEditPromo({ ...editPromo, order: e.target.value })} className="mt-1 border-white/10 bg-white/5" /></div>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-white/10 p-3"><Label>Ativa</Label><Switch checked={!!editPromo.active} onCheckedChange={(v) => setEditPromo({ ...editPromo, active: v })} /></div>
+          </div>)}
+          <DialogFooter><Button variant="outline" onClick={() => setEditPromo(null)}>Cancelar</Button><Button onClick={() => savePromo(editPromo)} className="bg-gradient-to-r from-amber-500 to-orange-600">Salvar</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
+  )
+}
+
+function ContentTab({ banners, promotions, products, onEditBanner, onDeleteBanner, onEditPromo, onDeletePromo, onToggleFeatured }) {
+  const featuredProducts = products.filter((p) => p.featured)
+  return (
+    <Tabs defaultValue="banner">
+      <TabsList className="mb-4 flex w-full flex-wrap bg-black/30">
+        <TabsTrigger value="banner"><ImageIcon className="mr-1 h-4 w-4" /> Banner</TabsTrigger>
+        <TabsTrigger value="promotions"><Flame className="mr-1 h-4 w-4" /> Promoções ({promotions.length})</TabsTrigger>
+        <TabsTrigger value="featured"><Star className="mr-1 h-4 w-4" /> Destaques ({featuredProducts.length})</TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="banner">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Banners ({banners.length})</h3>
+          <Button onClick={() => onEditBanner({ title: '', subtitle: '', image: '', buttonText: '', buttonLink: '', active: true })} className="bg-gradient-to-r from-amber-500 to-orange-600"><Plus className="mr-1 h-4 w-4" /> Novo banner</Button>
+        </div>
+        <div className="space-y-3">
+          {banners.map((b) => (
+            <Card key={b.id} className="overflow-hidden border-white/10 bg-zinc-900/60">
+              <div className="relative h-40 overflow-hidden">
+                {b.image && <img src={b.image} alt={b.title} className="h-full w-full object-cover opacity-60" />}
+                <div className="absolute inset-0 flex flex-col justify-center bg-gradient-to-r from-black/80 via-black/40 to-transparent p-5">
+                  <h4 className="text-xl font-bold">{b.title}</h4>
+                  <p className="text-sm text-muted-foreground">{b.subtitle}</p>
+                </div>
+                {b.active && <Badge className="absolute right-3 top-3 bg-emerald-500">Ativo</Badge>}
+              </div>
+              <div className="flex gap-2 border-t border-white/5 p-3">
+                <Button size="sm" variant="outline" className="flex-1 border-white/10" onClick={() => onEditBanner(b)}><Pencil className="mr-1 h-3 w-3" /> Editar</Button>
+                <Button size="sm" variant="outline" className="border-white/10 text-red-400" onClick={() => onDeleteBanner(b.id)}><Trash2 className="h-3 w-3" /></Button>
+              </div>
+            </Card>
+          ))}
+          {banners.length === 0 && <Card className="border-white/10 bg-zinc-900/60"><CardContent className="p-10 text-center text-muted-foreground">Nenhum banner criado ainda.</CardContent></Card>}
+        </div>
+      </TabsContent>
+
+      <TabsContent value="promotions">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Promoções ({promotions.length})</h3>
+          <Button onClick={() => onEditPromo({ title: '', description: '', image: '', priceText: '', active: true, order: promotions.length + 1 })} className="bg-gradient-to-r from-amber-500 to-orange-600"><Plus className="mr-1 h-4 w-4" /> Nova promoção</Button>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {promotions.map((p) => (
+            <Card key={p.id} className="border-white/10 bg-zinc-900/60"><CardContent className="p-4">
+              <div className="flex gap-3">
+                {p.image && <img src={p.image} alt={p.title} className="h-20 w-20 rounded-lg object-cover" />}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-2"><div className="truncate font-semibold">{p.title}</div>{!p.active && <Badge variant="secondary" className="bg-red-500/20 text-red-300">Off</Badge>}</div>
+                  <p className="line-clamp-2 text-xs text-muted-foreground">{p.description}</p>
+                  {p.priceText && <div className="mt-1 inline-flex rounded-full bg-orange-500/20 px-2 py-0.5 text-xs font-bold text-orange-300">{p.priceText}</div>}
+                </div>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <Button size="sm" variant="outline" className="flex-1 border-white/10" onClick={() => onEditPromo(p)}><Pencil className="mr-1 h-3 w-3" /> Editar</Button>
+                <Button size="sm" variant="outline" className="border-white/10 text-red-400" onClick={() => onDeletePromo(p.id)}><Trash2 className="h-3 w-3" /></Button>
+              </div>
+            </CardContent></Card>
+          ))}
+        </div>
+      </TabsContent>
+
+      <TabsContent value="featured">
+        <h3 className="mb-2 text-lg font-semibold">Destaques da casa</h3>
+        <p className="mb-4 text-sm text-muted-foreground">Marque os produtos que devem aparecer como destaque no topo do cardápio.</p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {products.map((p) => (
+            <Card key={p.id} className={`border ${p.featured ? 'border-amber-500/50 bg-amber-500/5' : 'border-white/10 bg-zinc-900/60'}`}><CardContent className="p-4">
+              <div className="flex gap-3">
+                {p.image && <img src={p.image} alt={p.name} className="h-16 w-16 rounded-lg object-cover" />}
+                <div className="flex-1 min-w-0">
+                  <div className="truncate font-semibold">{p.name}</div>
+                  <div className="text-amber-400 font-bold">{(p.price||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-between rounded-lg border border-white/10 p-2">
+                <Label className="flex items-center gap-2 text-sm"><Star className={`h-4 w-4 ${p.featured ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground'}`} /> Em destaque</Label>
+                <Switch checked={!!p.featured} onCheckedChange={() => onToggleFeatured(p)} />
+              </div>
+            </CardContent></Card>
+          ))}
+        </div>
+      </TabsContent>
+    </Tabs>
   )
 }
 

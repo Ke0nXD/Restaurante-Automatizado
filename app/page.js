@@ -16,6 +16,7 @@ import {
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { toast } from 'sonner'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import {
   ShoppingCart, Search, MapPin, Home, ArrowLeft, Plus, Minus, Trash2, ChefHat,
   Utensils, Bike, Check, Clock, CreditCard, Banknote, QrCode, MessageCircle,
@@ -50,24 +51,53 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [authUser, setAuthUser] = useState(null)
   const [recentOrders, setRecentOrders] = useState([])
+  const [banner, setBanner] = useState(null)
+  const [promotions, setPromotions] = useState([])
+  const [featured, setFeatured] = useState([])
+  const [showLoginGate, setShowLoginGate] = useState(false)
+  const [pendingAdd, setPendingAdd] = useState(null)
+  const router = useRouter()
 
   useEffect(() => {
-    setAuthUser(getUser())
+    const u = getUser()
+    setAuthUser(u)
     try {
       const saved = JSON.parse(localStorage.getItem('sabor_recent_orders') || '[]')
       setRecentOrders(saved)
+      // Restore pending add after login
+      if (u) {
+        const pending = localStorage.getItem('sabor_pending_add')
+        if (pending) {
+          const p = JSON.parse(pending)
+          localStorage.removeItem('sabor_pending_add')
+          // Add to cart directly (user is authenticated)
+          setCart((prev) => {
+            const existing = prev.find((i) => i.productId === p.product.id && i.observations === p.observations)
+            if (existing) return prev.map((i) => i === existing ? { ...i, quantity: i.quantity + p.quantity } : i)
+            return [...prev, { productId: p.product.id, name: p.product.name, price: p.product.price, image: p.product.image, quantity: p.quantity, observations: p.observations }]
+          })
+          setView('menu')
+          toast.success(`${p.product.name} adicionado ao carrinho`)
+        }
+      }
     } catch {}
   }, [])
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [pRes, cRes] = await Promise.all([
+        const [pRes, cRes, bRes, promoRes, fRes] = await Promise.all([
           fetch('/api/products'),
           fetch('/api/categories'),
+          fetch('/api/banner'),
+          fetch('/api/promotions'),
+          fetch('/api/products?featured=1'),
         ])
         setProducts(await pRes.json())
         setCategories(await cRes.json())
+        setBanner(await bRes.json())
+        setPromotions(await promoRes.json())
+        setFeatured(await fRes.json())
       } catch (e) {
         toast.error('Erro ao carregar cardápio')
       } finally {
@@ -97,6 +127,11 @@ function App() {
   const cartTotal = cart.reduce((s, i) => s + i.price * i.quantity, 0)
 
   const addToCart = (product, quantity = 1, observations = '') => {
+    if (!authUser) {
+      setPendingAdd({ product, quantity, observations })
+      setShowLoginGate(true)
+      return
+    }
     setCart((prev) => {
       const existing = prev.find(
         (i) => i.productId === product.id && i.observations === observations
@@ -548,6 +583,62 @@ function App() {
         />
       ) : (
         <div className="mx-auto max-w-6xl px-4 pt-6">
+          {/* Banner */}
+          {banner && banner.active && (
+            <div className="relative mb-6 overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-zinc-900 to-black">
+              {banner.image && <img src={banner.image} alt={banner.title} className="h-48 w-full object-cover opacity-40 sm:h-64" />}
+              <div className="absolute inset-0 flex flex-col justify-center bg-gradient-to-r from-black/80 via-black/50 to-transparent p-6 sm:p-10">
+                {banner.title && <h2 className="text-2xl font-bold sm:text-4xl">{banner.title}</h2>}
+                {banner.subtitle && <p className="mt-2 max-w-md text-sm text-muted-foreground sm:text-base">{banner.subtitle}</p>}
+                {banner.buttonText && banner.buttonLink && (
+                  <a href={banner.buttonLink} className="mt-4 inline-flex w-fit rounded-full bg-gradient-to-r from-amber-500 to-orange-600 px-5 py-2 text-sm font-semibold text-black">{banner.buttonText}</a>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Featured products */}
+          {featured.length > 0 && !search && activeCategory === 'all' && (
+            <div className="mb-8">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="text-lg">⭐</span>
+                <h3 className="text-xl font-bold">Destaques da casa</h3>
+              </div>
+              <div className="flex gap-4 overflow-x-auto pb-3">
+                {featured.map((p) => (
+                  <div key={p.id} className="min-w-[240px] max-w-[240px] shrink-0">
+                    <ProductCard product={p} onOpen={() => openDetail(p)} onAdd={() => addToCart(p, 1, '')} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Promotions */}
+          {promotions.length > 0 && !search && activeCategory === 'all' && (
+            <div className="mb-8">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="text-lg">🔥</span>
+                <h3 className="text-xl font-bold">Promoções</h3>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {promotions.map((promo) => (
+                  <Card key={promo.id} className="group overflow-hidden border-orange-500/20 bg-gradient-to-br from-orange-900/20 to-zinc-900/60">
+                    <div className="flex flex-col sm:flex-row">
+                      {promo.image && <img src={promo.image} alt={promo.title} className="h-40 w-full object-cover sm:h-auto sm:w-40" />}
+                      <CardContent className="flex-1 p-4">
+                        <h4 className="font-bold leading-tight">{promo.title}</h4>
+                        <p className="mt-1 text-xs text-muted-foreground">{promo.description}</p>
+                        {promo.priceText && <div className="mt-3 inline-flex rounded-full bg-gradient-to-r from-amber-500 to-orange-600 px-3 py-1 text-sm font-bold text-black">{promo.priceText}</div>}
+                      </CardContent>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Products grid */}
           {loading ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {Array.from({ length: 6 }).map((_, i) => (
@@ -560,11 +651,14 @@ function App() {
               <p className="text-muted-foreground">Nenhum produto encontrado</p>
             </div>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredProducts.map((p) => (
-                <ProductCard key={p.id} product={p} onOpen={() => openDetail(p)} onAdd={() => addToCart(p, 1, '')} />
-              ))}
-            </div>
+            <>
+              {(!search && activeCategory === 'all') && <h3 className="mb-3 text-xl font-bold">Cardápio completo</h3>}
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredProducts.map((p) => (
+                  <ProductCard key={p.id} product={p} onOpen={() => openDetail(p)} onAdd={() => addToCart(p, 1, '')} />
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -623,6 +717,38 @@ function App() {
               </div>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Login gate */}
+      <Dialog open={showLoginGate} onOpenChange={setShowLoginGate}>
+        <DialogContent className="max-w-md border-white/10 bg-zinc-950">
+          <DialogHeader>
+            <DialogTitle className="text-2xl">Faça login para continuar</DialogTitle>
+            <DialogDescription>
+              Para registrar seu pedido e manter o histórico, é necessário fazer login ou criar uma conta.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-sm">
+              💡 Seu carrinho será mantido. Após o login você continua do ponto onde parou.
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => {
+                  if (pendingAdd) localStorage.setItem('sabor_pending_add', JSON.stringify(pendingAdd))
+                  localStorage.setItem('sabor_redirect_after_login', '/')
+                  router.push('/login')
+                }}
+                className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600"
+              >
+                <LogIn className="mr-1 h-4 w-4" /> Entrar / Cadastrar
+              </Button>
+              <Button variant="outline" onClick={() => setShowLoginGate(false)} className="border-white/10">
+                Cancelar
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </main>

@@ -46,6 +46,50 @@ async function ensureSeed(db) {
   if (await db.collection('products').countDocuments() === 0) {
     await db.collection('products').insertMany(SEED_PRODUCTS)
   }
+  if (await db.collection('banners').countDocuments() === 0) {
+    await db.collection('banners').insertOne({
+      id: uuidv4(),
+      title: 'Bem-vindo ao Sabor & Arte',
+      subtitle: 'Sabores autorais direto da nossa cozinha para sua mesa',
+      image: 'https://images.unsplash.com/photo-1526318896980-cf78c088247c?w=1600&q=80',
+      buttonText: '',
+      buttonLink: '',
+      active: true,
+      createdAt: new Date().toISOString(),
+    })
+  }
+  if (await db.collection('promotions').countDocuments() === 0) {
+    await db.collection('promotions').insertMany([
+      {
+        id: uuidv4(),
+        title: 'Combo Duplo Pizza + Vinho',
+        description: 'Uma pizza artesanal grande + uma taça de vinho tinto por um preço especial.',
+        image: 'https://images.unsplash.com/photo-1579751626657-72bc17010498?w=800&q=80',
+        priceText: 'R$ 69,90',
+        active: true,
+        order: 1,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: uuidv4(),
+        title: 'Happy Hour',
+        description: 'De terça a sexta, das 17h às 20h — bebidas com 30% de desconto.',
+        image: 'https://images.unsplash.com/photo-1648146299076-ec0c5e5ead00?w=800&q=80',
+        priceText: '30% OFF',
+        active: true,
+        order: 2,
+        createdAt: new Date().toISOString(),
+      },
+    ])
+  }
+  // Mark some products as featured if none are
+  const featuredCount = await db.collection('products').countDocuments({ featured: true })
+  if (featuredCount === 0) {
+    await db.collection('products').updateMany(
+      { id: { $in: ['p-burger-classic', 'p-pizza-margherita', 'p-sobremesa-chocolate'] } },
+      { $set: { featured: true, featuredOrder: 1 } }
+    )
+  }
   // Seed default admin
   const adminExists = await db.collection('users').findOne({ email: 'admin@sabor.com' })
   if (!adminExists) {
@@ -107,9 +151,22 @@ async function handleGet(request, pathParts) {
   }
 
   if (resource === 'products') {
-    const query = request.url.includes('all=1') ? {} : { active: true }
-    const products = await db.collection('products').find(query).toArray()
+    const url = new URL(request.url)
+    const featured = url.searchParams.get('featured') === '1'
+    const query = url.searchParams.get('all') === '1' ? {} : { active: true }
+    if (featured) query.featured = true
+    const products = await db.collection('products').find(query).sort(featured ? { featuredOrder: 1 } : {}).toArray()
     return NextResponse.json(products.map(stripId))
+  }
+
+  if (resource === 'banner') {
+    const banner = await db.collection('banners').findOne({ active: true })
+    return NextResponse.json(banner ? stripId(banner) : null)
+  }
+
+  if (resource === 'promotions') {
+    const promos = await db.collection('promotions').find({ active: true }).sort({ order: 1 }).toArray()
+    return NextResponse.json(promos.map(stripId))
   }
 
   if (resource === 'orders' && id) {
@@ -176,6 +233,14 @@ async function handleGet(request, pathParts) {
     if (id === 'users') {
       const users = await db.collection('users').find({}).toArray()
       return NextResponse.json(users.map(stripId))
+    }
+    if (id === 'banners') {
+      const banners = await db.collection('banners').find({}).toArray()
+      return NextResponse.json(banners.map(stripId))
+    }
+    if (id === 'promotions') {
+      const promos = await db.collection('promotions').find({}).sort({ order: 1 }).toArray()
+      return NextResponse.json(promos.map(stripId))
     }
     if (id === 'stats') {
       const now = new Date()
@@ -365,6 +430,40 @@ async function handlePost(request, pathParts) {
       await db.collection('categories').insertOne(category)
       return NextResponse.json(stripId(category), { status: 201 })
     }
+    if (id === 'banners') {
+      const banner = {
+        id: uuidv4(),
+        title: body.title || '',
+        subtitle: body.subtitle || '',
+        image: body.image || '',
+        buttonText: body.buttonText || '',
+        buttonLink: body.buttonLink || '',
+        active: body.active !== false,
+        createdAt: new Date().toISOString(),
+      }
+      // If new banner is active, deactivate others
+      if (banner.active) {
+        await db.collection('banners').updateMany({}, { $set: { active: false } })
+      }
+      await db.collection('banners').insertOne(banner)
+      return NextResponse.json(stripId(banner), { status: 201 })
+    }
+    if (id === 'promotions') {
+      const promo = {
+        id: uuidv4(),
+        title: body.title || '',
+        description: body.description || '',
+        image: body.image || '',
+        priceText: body.priceText || '',
+        active: body.active !== false,
+        order: Number(body.order) || 99,
+        startsAt: body.startsAt || null,
+        endsAt: body.endsAt || null,
+        createdAt: new Date().toISOString(),
+      }
+      await db.collection('promotions').insertOne(promo)
+      return NextResponse.json(stripId(promo), { status: 201 })
+    }
   }
 
   return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -395,8 +494,8 @@ async function handlePatch(request, pathParts) {
     }
     if (id === 'products' && targetId) {
       const updates = {}
-      for (const k of ['name', 'description', 'price', 'image', 'categoryId', 'active']) {
-        if (body[k] !== undefined) updates[k] = k === 'price' ? Number(body[k]) : body[k]
+      for (const k of ['name', 'description', 'price', 'image', 'categoryId', 'active', 'featured', 'featuredOrder']) {
+        if (body[k] !== undefined) updates[k] = (k === 'price' || k === 'featuredOrder') ? Number(body[k]) : body[k]
       }
       await db.collection('products').updateOne({ id: targetId }, { $set: updates })
       const updated = await db.collection('products').findOne({ id: targetId })
@@ -423,6 +522,28 @@ async function handlePatch(request, pathParts) {
       }
       await db.collection('categories').updateOne({ id: targetId }, { $set: updates })
       const updated = await db.collection('categories').findOne({ id: targetId })
+      return NextResponse.json(stripId(updated))
+    }
+    if (id === 'banners' && targetId) {
+      const updates = {}
+      for (const k of ['title', 'subtitle', 'image', 'buttonText', 'buttonLink', 'active']) {
+        if (body[k] !== undefined) updates[k] = body[k]
+      }
+      // If activating, deactivate others
+      if (updates.active === true) {
+        await db.collection('banners').updateMany({ id: { $ne: targetId } }, { $set: { active: false } })
+      }
+      await db.collection('banners').updateOne({ id: targetId }, { $set: updates })
+      const updated = await db.collection('banners').findOne({ id: targetId })
+      return NextResponse.json(stripId(updated))
+    }
+    if (id === 'promotions' && targetId) {
+      const updates = {}
+      for (const k of ['title', 'description', 'image', 'priceText', 'active', 'order', 'startsAt', 'endsAt']) {
+        if (body[k] !== undefined) updates[k] = k === 'order' ? Number(body[k]) : body[k]
+      }
+      await db.collection('promotions').updateOne({ id: targetId }, { $set: updates })
+      const updated = await db.collection('promotions').findOne({ id: targetId })
       return NextResponse.json(stripId(updated))
     }
     if (id === 'comandas' && targetId) {
@@ -460,6 +581,14 @@ async function handleDelete(request, pathParts) {
     }
     if (id === 'categories' && targetId) {
       await db.collection('categories').deleteOne({ id: targetId })
+      return NextResponse.json({ ok: true })
+    }
+    if (id === 'banners' && targetId) {
+      await db.collection('banners').deleteOne({ id: targetId })
+      return NextResponse.json({ ok: true })
+    }
+    if (id === 'promotions' && targetId) {
+      await db.collection('promotions').deleteOne({ id: targetId })
       return NextResponse.json({ ok: true })
     }
   }
