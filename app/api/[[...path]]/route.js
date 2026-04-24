@@ -220,7 +220,15 @@ async function handleGet(request, pathParts) {
       if (status) q.status = status
       if (search) q['customer.name'] = { $regex: search, $options: 'i' }
       const comandas = await db.collection('comandas').find(q).sort({ openedAt: -1 }).toArray()
-      return NextResponse.json(comandas.map(stripId))
+      // Populate each comanda with its operational orders
+      const allOrderIds = comandas.flatMap((c) => c.orderIds || [])
+      const allOrders = await db.collection('orders').find({ id: { $in: allOrderIds } }).toArray()
+      const orderMap = Object.fromEntries(allOrders.map((o) => [o.id, stripId(o)]))
+      const enriched = comandas.map((c) => ({
+        ...stripId(c),
+        orders: (c.orderIds || []).map((oid) => orderMap[oid]).filter(Boolean),
+      }))
+      return NextResponse.json(enriched)
     }
     if (id === 'products') {
       const products = await db.collection('products').find({}).toArray()
@@ -339,11 +347,26 @@ async function handlePost(request, pathParts) {
     let comandaId = null
     if (type === 'local') {
       if (!table) return NextResponse.json({ error: 'Número da mesa obrigatório' }, { status: 400 })
-      // Find open comanda for this table
       const custName = customer?.name || 'Visitante'
-      let comanda = await db.collection('comandas').findOne({
-        table: String(table), status: { $in: ['aberta', 'aguardando_pagamento'] }
-      })
+      // Find OPEN conta (grupo de conta aberta) prioritizing logged userId.
+      // A conta only groups orders that are still open (não paga/não fechada).
+      let comanda = null
+      if (authed?.id) {
+        comanda = await db.collection('comandas').findOne({
+          userId: authed.id, status: { $in: ['aberta', 'aguardando_pagamento'] }
+        })
+        // If the customer moved tables, update the comanda's table
+        if (comanda && comanda.table !== String(table)) {
+          await db.collection('comandas').updateOne({ id: comanda.id }, { $set: { table: String(table) } })
+          comanda.table = String(table)
+        }
+      }
+      if (!comanda) {
+        // Guest users: match by table only (guests at same table share conta)
+        comanda = await db.collection('comandas').findOne({
+          table: String(table), userId: null, status: { $in: ['aberta', 'aguardando_pagamento'] }
+        })
+      }
       if (!comanda) {
         comanda = {
           id: uuidv4(), table: String(table),
@@ -554,10 +577,17 @@ async function handlePatch(request, pathParts) {
       if (action === 'pay') {
         const method = body.method || comanda.paymentMethod || 'Dinheiro'
         await db.collection('comandas').updateOne({ id: targetId }, { $set: { status: 'paga', paymentStatus: 'pago', paymentMethod: method, paidAt: now, closedAt: now } })
+        // Propagate payment info to all orders in this comanda (keep their operational status intact)
+        if (comanda.orderIds?.length) {
+          await db.collection('orders').updateMany(
+            { id: { $in: comanda.orderIds } },
+            { $set: { 'payment.method': method, 'payment.status': 'Pago', 'payment.paidAt': now } }
+          )
+        }
       } else if (action === 'close') {
         await db.collection('comandas').updateOne({ id: targetId }, { $set: { status: 'fechada', closedAt: now } })
       } else if (action === 'reopen') {
-        await db.collection('comandas').updateOne({ id: targetId }, { $set: { status: 'aberta' } })
+        await db.collection('comandas').updateOne({ id: targetId }, { $set: { status: 'aberta', closedAt: null, paidAt: null } })
       } else {
         return NextResponse.json({ error: 'Ação inválida' }, { status: 400 })
       }

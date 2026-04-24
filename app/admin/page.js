@@ -162,6 +162,11 @@ function AdminPage() {
     try {
       const updated = await apiFetch(`/api/admin/orders/${orderId}`, { method: 'PATCH', body: JSON.stringify({ status }) })
       setOrders((prev) => prev.map((o) => o.id === orderId ? updated : o))
+      // Update the order inside any comanda that contains it
+      setComandas((prev) => prev.map((c) => ({
+        ...c,
+        orders: (c.orders || []).map((o) => o.id === orderId ? updated : o),
+      })))
       toast.success(`Status: "${status}"`)
     } catch (e) { toast.error(e.message) }
   }
@@ -356,7 +361,9 @@ function AdminPage() {
             <ComandasTab
               open={openComandas} awaiting={awaitingPay} closed={closedComandas}
               onPayRequest={(c) => setPayDialog({ comanda: c, method: c.paymentMethod || 'Dinheiro' })}
-              onAction={comandaAction} loading={loading}
+              onAction={comandaAction}
+              onStatusChange={changeStatus}
+              loading={loading}
             />
           )}
           {tab === 'local' && <OrdersList orders={localOrders} statuses={LOCAL_STATUSES} onStatusChange={changeStatus} loading={loading} />}
@@ -607,7 +614,7 @@ function DashboardTab({ stats, orders }) {
   )
 }
 
-function ComandasTab({ open, awaiting, closed, onPayRequest, onAction, loading }) {
+function ComandasTab({ open, awaiting, closed, onPayRequest, onAction, onStatusChange, loading }) {
   return (
     <Tabs defaultValue="awaiting">
       <TabsList className="mb-4 flex w-full flex-wrap bg-black/30">
@@ -615,14 +622,14 @@ function ComandasTab({ open, awaiting, closed, onPayRequest, onAction, loading }
         <TabsTrigger value="open">🟢 Abertas ({open.length})</TabsTrigger>
         <TabsTrigger value="closed">Fechadas ({closed.length})</TabsTrigger>
       </TabsList>
-      <TabsContent value="awaiting"><ComandaList list={awaiting} onPayRequest={onPayRequest} onAction={onAction} loading={loading} emptyMsg="Nenhuma comanda aguardando pagamento" highlight /></TabsContent>
-      <TabsContent value="open"><ComandaList list={open} onPayRequest={onPayRequest} onAction={onAction} loading={loading} emptyMsg="Nenhuma comanda aberta" /></TabsContent>
-      <TabsContent value="closed"><ComandaList list={closed} onPayRequest={onPayRequest} onAction={onAction} loading={loading} emptyMsg="Nenhuma comanda fechada" /></TabsContent>
+      <TabsContent value="awaiting"><ComandaList list={awaiting} onPayRequest={onPayRequest} onAction={onAction} onStatusChange={onStatusChange} loading={loading} emptyMsg="Nenhuma conta aguardando pagamento" highlight /></TabsContent>
+      <TabsContent value="open"><ComandaList list={open} onPayRequest={onPayRequest} onAction={onAction} onStatusChange={onStatusChange} loading={loading} emptyMsg="Nenhuma conta aberta" /></TabsContent>
+      <TabsContent value="closed"><ComandaList list={closed} onPayRequest={onPayRequest} onAction={onAction} onStatusChange={onStatusChange} loading={loading} emptyMsg="Nenhuma conta fechada" /></TabsContent>
     </Tabs>
   )
 }
 
-function ComandaList({ list, onPayRequest, onAction, loading, emptyMsg, highlight }) {
+function ComandaList({ list, onPayRequest, onAction, onStatusChange, loading, emptyMsg, highlight }) {
   if (loading) return <p className="text-muted-foreground">Carregando...</p>
   if (!list.length) return <Card className="border-white/10 bg-zinc-900/60"><CardContent className="p-10 text-center text-muted-foreground">{emptyMsg}</CardContent></Card>
   return (
@@ -630,6 +637,7 @@ function ComandaList({ list, onPayRequest, onAction, loading, emptyMsg, highligh
       {list.map((c) => {
         const s = COMANDA_LABELS[c.status] || { label: c.status, color: 'bg-white/10' }
         const isAwait = c.status === 'aguardando_pagamento'
+        const ops = c.orders || []
         return (
           <Card key={c.id} className={`border bg-zinc-900/60 ${highlight && isAwait ? 'border-amber-500/50 shadow-lg shadow-amber-500/10 animate-pulse' : 'border-white/10'}`}>
             <CardContent className="p-4 sm:p-5">
@@ -638,26 +646,65 @@ function ComandaList({ list, onPayRequest, onAction, loading, emptyMsg, highligh
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge className="bg-amber-500/20 text-amber-300"><Utensils className="mr-1 h-3 w-3" /> Mesa {c.table}</Badge>
                     <Badge className={s.color}>{s.label}</Badge>
+                    {c.userId && <Badge variant="outline" className="text-xs">👤 Cliente logado</Badge>}
                     {isAwait && c.paymentMethod && <Badge variant="outline" className="border-amber-500/50 text-amber-300">💳 {c.paymentMethod}</Badge>}
                   </div>
-                  <div className="mt-2 font-semibold">{c.customer?.name}</div>
+                  <div className="mt-2 font-semibold">Conta de: {c.customer?.name}</div>
                   <div className="text-xs text-muted-foreground">Aberta: {new Date(c.openedAt).toLocaleString('pt-BR')}</div>
                   {c.closedAt && <div className="text-xs text-muted-foreground">Fechada: {new Date(c.closedAt).toLocaleString('pt-BR')}</div>}
-                  <div className="mt-1 text-xs text-muted-foreground">{c.orderIds?.length || 0} pedidos enviados</div>
                 </div>
                 <div className="text-right">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Total da conta</div>
                   <div className="text-2xl font-bold text-amber-400">{brl(c.total)}</div>
                 </div>
               </div>
+
+              {/* Operational orders within this conta */}
+              {ops.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pedidos operacionais ({ops.length})</div>
+                  {ops.map((o) => (
+                    <div key={o.id} className="rounded-lg border border-white/5 bg-black/30 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold">#{o.id.slice(0, 8).toUpperCase()}</span>
+                            <span className="text-[10px] text-muted-foreground">{new Date(o.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                          <div className="mt-1 space-y-0.5">
+                            {o.items.map((it, k) => (
+                              <div key={k} className="text-xs">
+                                <span className="text-muted-foreground">{it.quantity}× </span>
+                                <span>{it.name}</span>
+                                {it.observations && <span className="italic text-amber-300/70"> — {it.observations}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="text-sm font-semibold text-amber-400">{brl(o.total)}</span>
+                          {onStatusChange && (
+                            <Select value={o.status} onValueChange={(v) => onStatusChange(o.id, v)}>
+                              <SelectTrigger className="h-7 border-white/10 bg-white/5 text-[10px] w-36"><SelectValue /></SelectTrigger>
+                              <SelectContent>{LOCAL_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                            </Select>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="mt-4 flex flex-wrap gap-2">
                 {isAwait && (
-                  <Button onClick={() => onPayRequest(c)} className="flex-1 bg-gradient-to-r from-emerald-500 to-green-600 min-w-[200px]"><CheckCircle2 className="mr-1 h-4 w-4" /> Confirmar pagamento</Button>
+                  <Button onClick={() => onPayRequest(c)} className="flex-1 bg-gradient-to-r from-emerald-500 to-green-600 min-w-[200px]"><CheckCircle2 className="mr-1 h-4 w-4" /> Confirmar pagamento da conta</Button>
                 )}
                 {c.status === 'aberta' && (
                   <Button onClick={() => onPayRequest(c)} variant="outline" className="flex-1 border-amber-500/30 text-amber-300 min-w-[180px]"><DollarSign className="mr-1 h-4 w-4" /> Receber pagamento</Button>
                 )}
                 {(c.status === 'paga' || c.status === 'fechada') && (
-                  <Button onClick={() => onAction(c.id, 'reopen')} variant="outline" size="sm" className="border-white/10">Reabrir</Button>
+                  <Button onClick={() => onAction(c.id, 'reopen')} variant="outline" size="sm" className="border-white/10">Reabrir conta</Button>
                 )}
                 {c.status === 'aberta' && (
                   <Button onClick={() => onAction(c.id, 'close')} variant="outline" size="sm" className="border-white/10">Fechar s/ pgto</Button>
