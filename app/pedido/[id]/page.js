@@ -6,8 +6,9 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { ChefHat, ArrowLeft, Clock, Check, Utensils, Bike, MapPin, CreditCard, QrCode, Copy, CheckCircle2, Loader2 } from 'lucide-react'
+import { ChefHat, ArrowLeft, Clock, Check, Utensils, Bike, MapPin, CreditCard, QrCode, Copy, CheckCircle2, Loader2, AlertTriangle, PackageCheck } from 'lucide-react'
 import { toast } from 'sonner'
+import { apiFetch, getUser } from '@/lib/auth'
 
 const brl = (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
@@ -64,6 +65,36 @@ function OrderTrackingPage() {
           <PixCard order={order} />
         )}
 
+        {/* Delivery confirmation card */}
+        {order.type === 'delivery' && order.delivery?.status === 'Aguardando confirmação cliente' && (
+          <DeliveryConfirmCard order={order} onConfirmed={(o) => setOrder(o)} />
+        )}
+        {order.type === 'delivery' && (order.delivery?.status === 'Não Entregue' || order.status === 'Não Entregue') && (
+          <Card className="mb-4 border-red-500/40 bg-red-500/10">
+            <CardContent className="p-5">
+              <div className="mb-2 flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-red-400" />
+                <div className="font-semibold text-red-300">Pedido não entregue</div>
+              </div>
+              <p className="text-sm text-red-200/90">
+                <strong>Motivo:</strong> {order.delivery?.notDeliveredReason || order.delivery?.observation || 'Não informado'}
+              </p>
+              <p className="mt-2 text-xs text-red-200/70">Em caso de dúvida, entre em contato com o restaurante.</p>
+            </CardContent>
+          </Card>
+        )}
+        {order.type === 'delivery' && order.delivery?.status === 'Entregue' && order.delivery?.deliveryConfirmationStatus === 'confirmado_cliente' && (
+          <Card className="mb-4 border-emerald-500/40 bg-emerald-500/10">
+            <CardContent className="flex items-center gap-3 p-5">
+              <PackageCheck className="h-6 w-6 text-emerald-400" />
+              <div>
+                <div className="font-semibold text-emerald-300">Entrega confirmada por você</div>
+                <div className="text-xs text-emerald-200/80">{new Date(order.delivery.confirmedByCustomerAt).toLocaleString('pt-BR')}</div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Card className="mb-4 border-white/10 bg-zinc-900/60">
           <CardContent className="p-6">
             <div className="mb-4 flex items-center justify-between">
@@ -102,12 +133,17 @@ function OrderTrackingPage() {
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Itens</h3>
             <div className="space-y-2">
               {order.items.map((i, k) => (
-                <div key={k} className="flex items-start justify-between gap-4 text-sm">
-                  <div>
+                <div key={k} className="text-sm">
+                  <div className="flex items-start justify-between gap-4">
                     <div className="font-medium">{i.quantity}× {i.name}</div>
-                    {i.observations && <div className="text-xs text-muted-foreground">Obs: {i.observations}</div>}
+                    <div className="whitespace-nowrap">{brl(i.subtotal)}</div>
                   </div>
-                  <div className="whitespace-nowrap">{brl(i.subtotal)}</div>
+                  {Array.isArray(i.addOns) && i.addOns.length > 0 && (
+                    <div className="ml-4 mt-0.5 text-[11px] text-emerald-300/90">
+                      {i.addOns.map((a, ak) => <div key={ak}>+ {a.name} ({brl(a.price)})</div>)}
+                    </div>
+                  )}
+                  {i.observations && <div className="ml-4 mt-0.5 text-[11px] italic text-amber-300/80">💬 {i.observations}</div>}
                 </div>
               ))}
             </div>
@@ -209,6 +245,56 @@ function PixCard({ order }) {
             </div>
           </div>
         </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function DeliveryConfirmCard({ order, onConfirmed }) {
+  const [confirming, setConfirming] = useState(false)
+  const user = typeof window !== 'undefined' ? getUser() : null
+  const isOwner = user && order.userId === user.id
+
+  const confirm = async () => {
+    if (!user) {
+      toast.error('Faça login com a conta que realizou o pedido para confirmar')
+      return
+    }
+    if (!isOwner) {
+      toast.error('Apenas o cliente que fez o pedido pode confirmar')
+      return
+    }
+    setConfirming(true)
+    try {
+      const updated = await apiFetch(`/api/orders/${order.id}/confirm-delivery`, { method: 'POST', body: JSON.stringify({}) })
+      toast.success('Entrega confirmada! Obrigado 🎉')
+      onConfirmed?.(updated)
+    } catch (e) { toast.error(e.message) }
+    finally { setConfirming(false) }
+  }
+
+  return (
+    <Card className="mb-4 border-emerald-500/40 bg-gradient-to-br from-emerald-500/10 to-green-500/5">
+      <CardContent className="p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <PackageCheck className="h-5 w-5 text-emerald-400" />
+          <div className="font-semibold text-emerald-300">O entregador marcou como entregue</div>
+        </div>
+        <p className="mb-4 text-sm text-emerald-200/90">
+          Você recebeu o pedido em casa? Confirme abaixo para finalizar.
+        </p>
+        {!user && (
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-200">
+            Faça login com sua conta para confirmar a entrega.
+          </div>
+        )}
+        <Button
+          onClick={confirm}
+          disabled={confirming || !isOwner}
+          className="w-full bg-gradient-to-r from-emerald-500 to-green-600 text-white"
+        >
+          {confirming ? <><Loader2 className="mr-1 h-4 w-4 animate-spin" /> Confirmando...</> : <><Check className="mr-1 h-4 w-4" /> Confirmar recebimento</>}
+        </Button>
       </CardContent>
     </Card>
   )

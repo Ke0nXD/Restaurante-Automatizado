@@ -41,6 +41,7 @@ function App() {
   const [detailProduct, setDetailProduct] = useState(null)
   const [detailQty, setDetailQty] = useState(1)
   const [detailObs, setDetailObs] = useState('')
+  const [detailAddOns, setDetailAddOns] = useState([])
   const [checkoutStep, setCheckoutStep] = useState('info')
   const [tableNumber, setTableNumber] = useState('')
   const [customer, setCustomer] = useState({ name: '', phone: '' })
@@ -159,17 +160,20 @@ function App() {
   }, [products, activeCategory, search])
 
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0)
-  const cartTotal = cart.reduce((s, i) => s + i.price * i.quantity, 0)
+  const cartTotal = cart.reduce((s, i) => s + (i.finalUnitPrice ?? i.price) * i.quantity, 0)
 
-  const addToCart = (product, quantity = 1, observations = '') => {
+  const addToCart = (product, quantity = 1, observations = '', addOns = []) => {
     if (!authUser) {
-      setPendingAdd({ product, quantity, observations })
+      setPendingAdd({ product, quantity, observations, addOns })
       setShowLoginGate(true)
       return
     }
+    const addOnsKey = addOns.map((a) => a.id).sort().join(',')
+    const addOnsTotal = addOns.reduce((s, a) => s + Number(a.price || 0), 0)
+    const finalUnitPrice = Number(product.price || 0) + addOnsTotal
     setCart((prev) => {
       const existing = prev.find(
-        (i) => i.productId === product.id && i.observations === observations
+        (i) => i.productId === product.id && i.observations === observations && (i.addOnsKey || '') === addOnsKey
       )
       if (existing) {
         return prev.map((i) =>
@@ -185,6 +189,10 @@ function App() {
           image: product.image,
           quantity,
           observations,
+          addOns,
+          addOnsKey,
+          addOnsTotal,
+          finalUnitPrice,
         },
       ]
     })
@@ -203,7 +211,7 @@ function App() {
   }
 
   const openDetail = (p) => {
-    setDetailProduct(p); setDetailQty(1); setDetailObs('')
+    setDetailProduct(p); setDetailQty(1); setDetailObs(''); setDetailAddOns([])
   }
 
   const submitOrder = async () => {
@@ -215,6 +223,7 @@ function App() {
           productId: i.productId,
           quantity: i.quantity,
           observations: i.observations,
+          addOns: (i.addOns || []).map((a) => ({ id: a.id, name: a.name, price: a.price })),
         })),
         customer: { name: customer.name || 'Visitante', phone: customer.phone || '' },
       }
@@ -557,6 +566,13 @@ function App() {
                               &ldquo;{item.observations}&rdquo;
                             </div>
                           )}
+                          {Array.isArray(item.addOns) && item.addOns.length > 0 && (
+                            <div className="mt-1 space-y-0.5">
+                              {item.addOns.map((a, k) => (
+                                <div key={k} className="text-[11px] text-emerald-300">+ {a.name} ({brl(a.price)})</div>
+                              ))}
+                            </div>
+                          )}
                           <div className="mt-2 flex items-center justify-between">
                             <div className="flex items-center gap-2 rounded-full bg-black/40 p-1">
                               <button onClick={() => updateQty(idx, -1)} className="flex h-6 w-6 items-center justify-center rounded-full hover:bg-white/10">
@@ -567,7 +583,7 @@ function App() {
                                 <Plus className="h-3 w-3" />
                               </button>
                             </div>
-                            <div className="font-semibold text-amber-400">{brl(item.price * item.quantity)}</div>
+                            <div className="font-semibold text-brand">{brl((item.finalUnitPrice ?? item.price) * item.quantity)}</div>
                           </div>
                         </div>
                       </div>
@@ -780,7 +796,34 @@ function App() {
                   </DialogDescription>
                 </DialogHeader>
                 <div className="mt-4">
-                  <div className="mb-3 text-2xl font-bold text-amber-400">{brl(detailProduct.price)}</div>
+                  <div className="mb-3 text-2xl font-bold text-brand">{brl(detailProduct.price)}</div>
+                  {Array.isArray(detailProduct.addOns) && detailProduct.addOns.filter((a) => a.active !== false).length > 0 && (
+                    <div className="mb-4">
+                      <Label className="mb-2 block text-sm font-semibold">Adicionais</Label>
+                      <div className="space-y-2">
+                        {detailProduct.addOns.filter((a) => a.active !== false).map((a) => {
+                          const isOn = detailAddOns.some((x) => x.id === a.id)
+                          return (
+                            <label key={a.id} className={`flex cursor-pointer items-center justify-between gap-2 rounded-lg border p-2.5 text-sm transition ${isOn ? 'border-brand bg-brand-soft' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={isOn}
+                                  onChange={(e) => {
+                                    if (e.target.checked) setDetailAddOns([...detailAddOns, { id: a.id, name: a.name, price: a.price }])
+                                    else setDetailAddOns(detailAddOns.filter((x) => x.id !== a.id))
+                                  }}
+                                  className="h-4 w-4 accent-amber-500"
+                                />
+                                <span className="font-medium">{a.name}</span>
+                              </div>
+                              <span className="text-emerald-300">+ {brl(a.price)}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <Label className="mb-1 block text-sm">Observações (opcional)</Label>
                   <Textarea
                     placeholder="Ex.: sem cebola, ponto da carne mal passado..."
@@ -800,10 +843,10 @@ function App() {
                     </button>
                   </div>
                   <Button
-                    onClick={() => { addToCart(detailProduct, detailQty, detailObs); setDetailProduct(null) }}
+                    onClick={() => { addToCart(detailProduct, detailQty, detailObs, detailAddOns); setDetailProduct(null) }}
                     className="bg-brand-gradient hover:opacity-90"
                   >
-                    Adicionar {brl(detailProduct.price * detailQty)}
+                    Adicionar {brl((detailProduct.price + detailAddOns.reduce((s, a) => s + Number(a.price || 0), 0)) * detailQty)}
                   </Button>
                 </DialogFooter>
               </div>
@@ -1048,9 +1091,17 @@ function CheckoutView({
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Resumo</div>
             <div className="space-y-1">
               {cart.map((i, k) => (
-                <div key={k} className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">{i.quantity}× {i.name}</span>
-                  <span>{brl(i.price * i.quantity)}</span>
+                <div key={k} className="space-y-0.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{i.quantity}× {i.name}</span>
+                    <span>{brl((i.finalUnitPrice ?? i.price) * i.quantity)}</span>
+                  </div>
+                  {Array.isArray(i.addOns) && i.addOns.length > 0 && (
+                    <div className="pl-4 text-[10px] text-emerald-300">
+                      {i.addOns.map((a, ak) => <div key={ak}>+ {a.name}</div>)}
+                    </div>
+                  )}
+                  {i.observations && <div className="pl-4 text-[10px] italic text-muted-foreground">&ldquo;{i.observations}&rdquo;</div>}
                 </div>
               ))}
             </div>

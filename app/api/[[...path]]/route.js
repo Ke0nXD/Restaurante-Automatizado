@@ -731,7 +731,30 @@ async function handlePost(request, pathParts) {
     const snapshotItems = items.map((i) => {
       const p = prodMap[i.productId]
       if (!p) throw new Error(`Produto ${i.productId} inexistente`)
-      return { productId: p.id, name: p.name, price: p.price, image: p.image, quantity: i.quantity, observations: i.observations || '', subtotal: p.price * i.quantity }
+      // Validate add-ons against product config
+      const productAddOns = Array.isArray(p.addOns) ? p.addOns : []
+      const selectedAddOns = Array.isArray(i.addOns) ? i.addOns.map((sel) => {
+        const match = productAddOns.find((a) => a.id === sel.id || a.name === sel.name)
+        if (match && match.active !== false) {
+          return { id: match.id, name: match.name, price: Number(match.price || 0) }
+        }
+        return null
+      }).filter(Boolean) : []
+      const addOnsTotal = selectedAddOns.reduce((s, a) => s + Number(a.price || 0), 0)
+      const finalUnitPrice = Number(p.price || 0) + addOnsTotal
+      const subtotal = finalUnitPrice * i.quantity
+      return {
+        productId: p.id,
+        name: p.name,
+        price: p.price,
+        image: p.image,
+        quantity: i.quantity,
+        observations: i.observations || '',
+        addOns: selectedAddOns,
+        addOnsTotal,
+        finalUnitPrice,
+        subtotal,
+      }
     })
 
     const total = snapshotItems.reduce((s, i) => s + i.subtotal, 0)
@@ -861,6 +884,41 @@ async function handlePost(request, pathParts) {
     return NextResponse.json(stripId(updated))
   }
 
+  // Customer confirms delivery received at home
+  if (resource === 'orders' && id && pathParts[2] === 'confirm-delivery') {
+    const user = getAuthUser(request)
+    if (!user) return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
+    const order = await db.collection('orders').findOne({ id })
+    if (!order) return NextResponse.json({ error: 'Pedido não encontrado' }, { status: 404 })
+    if (order.userId !== user.id) return NextResponse.json({ error: 'Pedido não pertence a você' }, { status: 403 })
+    if (order.type !== 'delivery') return NextResponse.json({ error: 'Apenas pedidos delivery podem ser confirmados' }, { status: 400 })
+    if (order.delivery?.status !== 'Aguardando confirmação cliente') {
+      return NextResponse.json({ error: 'Pedido ainda não foi marcado como entregue pelo entregador' }, { status: 400 })
+    }
+    const now = new Date().toISOString()
+    await db.collection('orders').updateOne(
+      { id },
+      {
+        $set: {
+          'delivery.status': 'Entregue',
+          'delivery.deliveryConfirmationStatus': 'confirmado_cliente',
+          'delivery.confirmedByCustomerAt': now,
+          status: 'Finalizado',
+        },
+        $push: { statusHistory: { status: 'Entrega confirmada pelo cliente', at: now } },
+      }
+    )
+    await createNotification(db, {
+      type: 'delivery_confirmed_by_customer',
+      referenceId: id,
+      title: '✅ Cliente confirmou recebimento',
+      message: `Pedido #${id.slice(0, 8).toUpperCase()} de ${order.customer?.name || 'cliente'}`,
+      targetRoles: ['owner_admin', 'admin', 'attendant', 'delivery_driver'],
+    })
+    const updated = await db.collection('orders').findOne({ id })
+    return NextResponse.json(stripId(updated))
+  }
+
   // PIX: regenerate / refresh payment for a delivery order
   if (resource === 'orders' && id && pathParts[2] === 'pix-regenerate') {
     const order = await db.collection('orders').findOne({ id })
@@ -955,6 +1013,12 @@ async function handlePost(request, pathParts) {
         image: body.image || '',
         categoryId: body.categoryId,
         active: body.active !== false,
+        addOns: Array.isArray(body.addOns) ? body.addOns.map((a) => ({
+          id: a.id || uuidv4(),
+          name: String(a.name || '').trim(),
+          price: Number(a.price) || 0,
+          active: a.active !== false,
+        })).filter((a) => a.name) : [],
       }
       await db.collection('products').insertOne(product)
       return NextResponse.json(stripId(product), { status: 201 })
@@ -1074,13 +1138,26 @@ async function handlePatch(request, pathParts) {
       if (body.deliveryStatus !== undefined) {
         if (!['Entregue', 'Não Entregue'].includes(body.deliveryStatus)) return NextResponse.json({ error: 'Status de entrega inválido' }, { status: 400 })
         if (body.deliveryStatus === 'Não Entregue' && !body.deliveryObservation) return NextResponse.json({ error: 'Observação obrigatória para pedido não entregue' }, { status: 400 })
-        updates.delivery = {
-          status: body.deliveryStatus,
+        const driverDeliveredAt = now
+        // When driver marks "Entregue", we set an intermediate state awaiting customer confirmation.
+        // Only "Não Entregue" finalizes immediately.
+        const newDelivery = {
+          status: body.deliveryStatus === 'Entregue' ? 'Aguardando confirmação cliente' : 'Não Entregue',
+          driverStatus: body.deliveryStatus,
           observation: body.deliveryObservation || '',
           updatedAt: now,
           driverId: guard.user.id,
+          deliveredByDriverAt: body.deliveryStatus === 'Entregue' ? driverDeliveredAt : null,
+          notDeliveredReason: body.deliveryStatus === 'Não Entregue' ? body.deliveryObservation : null,
         }
-        entries.push({ status: `Entrega: ${body.deliveryStatus}`, at: now, note: body.deliveryObservation || '' })
+        updates.delivery = newDelivery
+        // If "Não Entregue" — finalize order with that status
+        if (body.deliveryStatus === 'Não Entregue') {
+          updates.status = 'Não Entregue'
+          entries.push({ status: 'Não Entregue', at: now, note: body.deliveryObservation })
+        } else {
+          entries.push({ status: 'Entregue (aguardando confirmação cliente)', at: now })
+        }
       }
       // Payment status/method update
       if (body.paymentStatus || body.paymentMethod) {
@@ -1103,6 +1180,14 @@ async function handlePatch(request, pathParts) {
       const updates = {}
       for (const k of ['name', 'description', 'price', 'image', 'categoryId', 'active', 'featured', 'featuredOrder']) {
         if (body[k] !== undefined) updates[k] = (k === 'price' || k === 'featuredOrder') ? Number(body[k]) : body[k]
+      }
+      if (Array.isArray(body.addOns)) {
+        updates.addOns = body.addOns.map((a) => ({
+          id: a.id || uuidv4(),
+          name: String(a.name || '').trim(),
+          price: Number(a.price) || 0,
+          active: a.active !== false,
+        })).filter((a) => a.name)
       }
       await db.collection('products').updateOne({ id: targetId }, { $set: updates })
       const updated = await db.collection('products').findOne({ id: targetId })

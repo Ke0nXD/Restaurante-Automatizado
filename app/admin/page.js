@@ -680,6 +680,59 @@ function AdminPage() {
             </div>
             <div><ImageField label="Imagem" value={editProduct.image} onChange={(v) => setEditProduct({ ...editProduct, image: v })} /></div>
             <div className="flex items-center justify-between rounded-lg border border-white/10 p-3"><Label>Ativo</Label><Switch checked={editProduct.active} onCheckedChange={(v) => setEditProduct({ ...editProduct, active: v })} /></div>
+            {/* Add-ons editor */}
+            <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <Label className="text-sm font-semibold">Adicionais (opcionais com preço extra)</Label>
+                <Button type="button" size="sm" variant="outline" className="h-7 border-white/10" onClick={() => setEditProduct({ ...editProduct, addOns: [...(editProduct.addOns || []), { id: crypto.randomUUID(), name: '', price: 0, active: true }] })}>
+                  <Plus className="mr-1 h-3 w-3" /> Adicional
+                </Button>
+              </div>
+              {(editProduct.addOns || []).length === 0 ? (
+                <p className="text-xs text-muted-foreground">Sem adicionais. Clique em &ldquo;+ Adicional&rdquo; para criar.</p>
+              ) : (
+                <div className="space-y-2">
+                  {(editProduct.addOns || []).map((a, idx) => (
+                    <div key={a.id || idx} className="flex items-center gap-2 rounded-md border border-white/5 bg-white/5 p-2">
+                      <Input
+                        placeholder="Ex.: Queijo extra"
+                        value={a.name}
+                        onChange={(e) => {
+                          const next = [...editProduct.addOns]
+                          next[idx] = { ...next[idx], name: e.target.value }
+                          setEditProduct({ ...editProduct, addOns: next })
+                        }}
+                        className="h-8 flex-1 border-white/10 bg-black/20 text-sm"
+                      />
+                      <div className="relative w-28">
+                        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">R$</span>
+                        <Input
+                          type="number"
+                          step="0.10"
+                          value={a.price}
+                          onChange={(e) => {
+                            const next = [...editProduct.addOns]
+                            next[idx] = { ...next[idx], price: Number(e.target.value) }
+                            setEditProduct({ ...editProduct, addOns: next })
+                          }}
+                          className="h-8 border-white/10 bg-black/20 pl-7 text-sm"
+                        />
+                      </div>
+                      <Switch checked={a.active !== false} onCheckedChange={(v) => {
+                        const next = [...editProduct.addOns]
+                        next[idx] = { ...next[idx], active: v }
+                        setEditProduct({ ...editProduct, addOns: next })
+                      }} />
+                      <Button type="button" size="sm" variant="outline" className="h-8 w-8 border-red-500/30 bg-red-500/10 p-0 text-red-300" onClick={() => {
+                        setEditProduct({ ...editProduct, addOns: editProduct.addOns.filter((_, k) => k !== idx) })
+                      }}>
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>)}
           <DialogFooter><Button variant="outline" onClick={() => setEditProduct(null)}>Cancelar</Button><Button onClick={() => saveProduct(editProduct)} className="bg-brand-gradient">Salvar</Button></DialogFooter>
         </DialogContent>
@@ -1007,13 +1060,29 @@ function OrdersList({ orders, statuses, onStatusChange, loading, isOwner, isDriv
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-bold">#{o.id.slice(0,8).toUpperCase()}</span>{o.type==='local'?<Badge className="bg-amber-500/20 text-amber-300"><Utensils className="mr-1 h-3 w-3"/>Mesa {o.table}</Badge>:<Badge className="bg-orange-500/20 text-orange-300"><Bike className="mr-1 h-3 w-3"/>Delivery</Badge>}
                 {o.payment?.status === 'Pago' ? <Badge className="bg-emerald-500/20 text-emerald-300">💰 Pago · {o.payment.method}</Badge> : <Badge variant="outline" className="border-amber-500/30 text-amber-300">⏳ Pgto Pendente</Badge>}
-                {o.delivery?.status === 'Entregue' && <Badge className="bg-emerald-500/20 text-emerald-300">📦 Entregue</Badge>}
+                {o.delivery?.status === 'Aguardando confirmação cliente' && <Badge className="bg-blue-500/20 text-blue-300">📦 Aguardando cliente confirmar</Badge>}
+                {o.delivery?.status === 'Entregue' && <Badge className="bg-emerald-500/20 text-emerald-300">📦 Entregue {o.delivery?.deliveryConfirmationStatus === 'confirmado_cliente' ? '✅' : ''}</Badge>}
                 {o.delivery?.status === 'Não Entregue' && <Badge className="bg-red-500/20 text-red-300">⚠️ Não Entregue</Badge>}
               </div>
               <div className="mt-1 text-sm font-medium">{o.customer?.name}{o.customer?.phone && <span className="text-muted-foreground"> · {o.customer.phone}</span>}</div>
               <div className="text-xs text-muted-foreground">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
               {o.type==='delivery' && o.address && <div className="mt-1 text-xs text-muted-foreground">📍 {o.address.street}, {o.address.number} · {o.address.district} · {o.address.city}</div>}
-              {o.delivery?.observation && <div className="mt-1 rounded-md bg-red-500/10 px-2 py-1 text-xs text-red-300">💬 {o.delivery.observation}</div>}
+              {o.delivery?.notDeliveredReason && (
+                <div className="mt-1 rounded-md bg-red-500/10 px-2 py-1 text-xs text-red-300">
+                  ⚠️ <strong>Motivo da não entrega:</strong> {o.delivery.notDeliveredReason}
+                </div>
+              )}
+              {o.delivery?.deliveredByDriverAt && !o.delivery?.confirmedByCustomerAt && o.delivery?.status === 'Aguardando confirmação cliente' && (
+                <div className="mt-1 rounded-md bg-blue-500/10 px-2 py-1 text-xs text-blue-300">
+                  📦 Entregador marcou em {new Date(o.delivery.deliveredByDriverAt).toLocaleString('pt-BR')} — aguardando cliente confirmar
+                </div>
+              )}
+              {o.delivery?.confirmedByCustomerAt && (
+                <div className="mt-1 rounded-md bg-emerald-500/10 px-2 py-1 text-xs text-emerald-300">
+                  ✅ Cliente confirmou recebimento em {new Date(o.delivery.confirmedByCustomerAt).toLocaleString('pt-BR')}
+                </div>
+              )}
+              {o.delivery?.observation && !o.delivery?.notDeliveredReason && <div className="mt-1 rounded-md bg-red-500/10 px-2 py-1 text-xs text-red-300">💬 {o.delivery.observation}</div>}
             </div>
             <div className="w-full sm:w-auto sm:text-right">
               <div className="text-xl font-bold text-amber-400">{brl(o.total)}</div>
@@ -1028,7 +1097,21 @@ function OrdersList({ orders, statuses, onStatusChange, loading, isOwner, isDriv
           </div>
           <div className="mt-3 rounded-lg border border-white/5 bg-black/30 p-3">
             <div className="space-y-1">{o.items.map((i, k) => (
-              <div key={k} className="flex justify-between text-sm"><div className="min-w-0 flex-1 truncate"><span className="text-muted-foreground">{i.quantity}× </span><span>{i.name}</span>{i.observations && <span className="italic text-amber-300/70"> — {i.observations}</span>}</div><span className="whitespace-nowrap text-muted-foreground">{brl(i.subtotal)}</span></div>
+              <div key={k} className="text-sm">
+                <div className="flex justify-between">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-muted-foreground">{i.quantity}× </span>
+                    <span>{i.name}</span>
+                  </div>
+                  <span className="whitespace-nowrap text-muted-foreground">{brl(i.subtotal)}</span>
+                </div>
+                {Array.isArray(i.addOns) && i.addOns.length > 0 && (
+                  <div className="ml-4 mt-0.5 text-[11px] text-emerald-300/90">
+                    {i.addOns.map((a, ak) => <div key={ak}>+ {a.name} ({brl(a.price)})</div>)}
+                  </div>
+                )}
+                {i.observations && <div className="ml-4 mt-0.5 text-[11px] italic text-amber-300/80">💬 {i.observations}</div>}
+              </div>
             ))}</div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
