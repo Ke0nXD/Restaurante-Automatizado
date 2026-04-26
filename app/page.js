@@ -690,6 +690,10 @@ function App() {
           paymentMethod={paymentMethod}
           setPaymentMethod={setPaymentMethod}
           paymentMethods={paymentMethods}
+          changeNeeded={changeNeeded}
+          setChangeNeeded={setChangeNeeded}
+          changeFor={changeFor}
+          setChangeFor={setChangeFor}
           cart={cart}
           cartTotal={cartTotal}
           submitting={submitting}
@@ -949,7 +953,8 @@ function ProductCard({ product, onOpen, onAdd }) {
 function CheckoutView({
   orderType, checkoutStep, setCheckoutStep, tableNumber, setTableNumber,
   customer, setCustomer, address, setAddress, paymentMethod, setPaymentMethod,
-  paymentMethods, cart, cartTotal, submitting, onSubmit, onBack,
+  paymentMethods, changeNeeded, setChangeNeeded, changeFor, setChangeFor,
+  cart, cartTotal, submitting, onSubmit, onBack,
 }) {
   const canSubmitLocal = tableNumber && cart.length > 0
   const canGoPayment = address.street && address.number && address.district && address.city && customer.name && customer.phone
