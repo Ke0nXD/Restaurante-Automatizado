@@ -748,6 +748,18 @@ backend:
       - working: true
         agent: "testing"
         comment: "Testado: admin pode marcar comanda como paga usando action='pay' e method. Status atualizado para 'paga' corretamente."
+
+  - task: "POST /api/orders delivery address validation fix"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Testado: fix do bug 'Endereço obrigatório' validado com 100% sucesso (5/5 testes). ✅ Valid delivery orders com address completo aceitos e salvos corretamente (street, city verificados). ✅ Cash delivery com changeFor=50 funciona. ✅ Missing address.street retorna 400 'Endereço obrigatório'. ✅ Empty address.street retorna 400 'Endereço obrigatório'. ✅ Null address retorna 400 'Endereço obrigatório'. Frontend fix (app/page.js linha 232-243) enviando address do estado correto funcionando perfeitamente."
 frontend:
   - task: "ThemeProvider + CSS vars dinâmicas + light/dark/auto"
     implemented: true
@@ -838,3 +850,5 @@ agent_communication:
 
   - agent: "testing"
     message: "Focused regression test on restaurant API after recent hotfixes COMPLETED with 100% success (14/14 tests passed). All requested scenarios validated: ✅ (1) Cash delivery with change regression - changeNeeded/changeFor/changeAmount calculations work correctly for both true/false scenarios. ✅ (2) Driver delivery flow finalizes order - when driver marks 'Entregue', order.status becomes 'Finalizado' and appears in history=1, not in history=0. ✅ (3) Driver 'Não Entregue' flow works - manual 'Não Entregue' and paymentConfirmed=false forcing 'Não Entregue' both function correctly. ✅ (4) Type filter on history - GET /api/admin/orders?history=1&type=delivery and type=local filters work properly. ✅ (5) Quick regression - all basic endpoints (health, theme, payment-methods, admin login) working. MINOR FIX APPLIED: Fixed backend bug in line 1174 where variable 'id' should be 'targetId' for proper order lookup in delivery status handler. All hotfixes are working as expected."
+  - agent: "testing"
+    message: "Validação do fix 'Endereço obrigatório' no checkout delivery CONCLUÍDA com 100% de sucesso (5/5 testes passaram). ✅ FUNCIONANDO PERFEITAMENTE: (1) Pedidos delivery válidos com address completo são aceitos (201) e address.street/city salvos corretamente. (2) Cash delivery com changeNeeded=true e changeFor=50 funciona corretamente. (3) Validação de address.street obrigatório: missing field retorna 400 'Endereço obrigatório'. (4) Empty string address.street retorna 400 'Endereço obrigatório'. (5) Null address retorna 400 'Endereço obrigatório'. O fix no frontend (app/page.js linha 232-243) que corrigiu o payload para enviar address do estado correto (ao invés de customer.address) está funcionando perfeitamente. Backend validation (route.js linha 834) if (!address?.street) funcionando como esperado."
