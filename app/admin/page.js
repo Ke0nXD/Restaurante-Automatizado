@@ -165,15 +165,17 @@ function AdminPage() {
       const results = await Promise.allSettled(Object.entries(promises).map(async ([k, p]) => [k, await p]))
       const data = {}
       results.forEach((r) => { if (r.status === 'fulfilled') { const [k, v] = r.value; data[k] = v } })
-      if (data.orders) setOrders([...(data.orders || []), ...(data.history || [])])
-      if (data.comandas) setComandas(data.comandas)
+      // Defensive: ensure arrays even if API returns errors/objects
+      const arr = (v) => Array.isArray(v) ? v : []
+      if (data.orders !== undefined) setOrders([...arr(data.orders), ...arr(data.history)])
+      if (data.comandas !== undefined) setComandas(arr(data.comandas))
       if (data.stats) setStats(data.stats)
-      if (data.products) setProducts(data.products)
-      if (data.categories) setCategories(data.categories)
-      if (data.users) setUsers(data.users)
-      if (data.banners) setBanners(data.banners)
-      if (data.promotions) setPromotions(data.promotions)
-      if (data.paymentMethodsConfig) setPaymentMethodsConfig(data.paymentMethodsConfig)
+      if (data.products !== undefined) setProducts(arr(data.products))
+      if (data.categories !== undefined) setCategories(arr(data.categories))
+      if (data.users !== undefined) setUsers(arr(data.users))
+      if (data.banners !== undefined) setBanners(arr(data.banners))
+      if (data.promotions !== undefined) setPromotions(arr(data.promotions))
+      if (data.paymentMethodsConfig !== undefined) setPaymentMethodsConfig(arr(data.paymentMethodsConfig))
     } catch (e) {
       if (e.message.includes('autenticado') || e.message.includes('negado')) { clearAuth(); router.push('/login') }
       else toast.error(e.message)
@@ -197,11 +199,14 @@ function AdminPage() {
     const pollOnce = async () => {
       try {
         const qs = search ? `?search=${encodeURIComponent(search)}` : ''
-        const [o, cmd, notifs] = await Promise.all([
+        const [oRaw, cmdRaw, notifsRaw] = await Promise.all([
           apiFetch(`/api/admin/orders${qs ? qs + '&history=0' : '?history=0'}`),
           apiFetch(`/api/admin/comandas${qs}`),
           apiFetch('/api/admin/notifications'),
         ])
+        const o = Array.isArray(oRaw) ? oRaw : []
+        const cmd = Array.isArray(cmdRaw) ? cmdRaw : []
+        const notifs = Array.isArray(notifsRaw) ? notifsRaw : []
         // Detect NEW notifications (not beeped yet in this session) to play sound + toast
         const freshUnread = notifs.filter((n) => !n.isRead && !beepedIdsRef.current.has(n.id))
         if (freshUnread.length > 0) {
@@ -215,7 +220,8 @@ function AdminPage() {
         notifs.filter((n) => n.isRead).forEach((n) => beepedIdsRef.current.add(n.id))
         setNotifications(notifs)
         setOrders((prev) => {
-          const history = prev.filter((x) => x.status === 'Finalizado')
+          const TERMINAL = ['Finalizado', 'Não Entregue', 'Cancelado']
+          const history = prev.filter((x) => TERMINAL.includes(x.status))
           return [...o, ...history]
         })
         setComandas(cmd)
