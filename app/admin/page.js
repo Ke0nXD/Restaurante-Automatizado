@@ -86,7 +86,7 @@ function AdminPage() {
   const [editPromo, setEditPromo] = useState(null)
   const [paymentMethodsConfig, setPaymentMethodsConfig] = useState([])
   const [deliveryDialog, setDeliveryDialog] = useState(null)
-  const [filters, setFilters] = useState({ status: '', minValue: '', maxValue: '', table: '', address: '', dateFrom: '', dateTo: '', paymentStatus: '', paymentMethod: '', deliveryStatus: '' })
+  const [filters, setFilters] = useState({ type: '', status: '', minValue: '', maxValue: '', table: '', address: '', dateFrom: '', dateTo: '', paymentStatus: '', paymentMethod: '', deliveryStatus: '' })
   const [search, setSearch] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -486,7 +486,9 @@ function AdminPage() {
 
   if (!user) return null
 
+  const TERMINAL_STATUSES = ['Finalizado', 'Não Entregue', 'Cancelado']
   const applyFilters = (list) => list.filter((o) => {
+    if (filters.type && o.type !== filters.type) return false
     if (filters.status && o.status !== filters.status) return false
     if (filters.minValue && o.total < Number(filters.minValue)) return false
     if (filters.maxValue && o.total > Number(filters.maxValue)) return false
@@ -500,9 +502,9 @@ function AdminPage() {
     return true
   })
 
-  const deliveryOrders = applyFilters(orders.filter((o) => o.type === 'delivery' && o.status !== 'Finalizado'))
-  const localOrders = applyFilters(orders.filter((o) => o.type === 'local' && o.status !== 'Finalizado'))
-  const historyOrders = applyFilters(orders.filter((o) => o.status === 'Finalizado'))
+  const deliveryOrders = applyFilters(orders.filter((o) => o.type === 'delivery' && !TERMINAL_STATUSES.includes(o.status)))
+  const localOrders = applyFilters(orders.filter((o) => o.type === 'local' && !TERMINAL_STATUSES.includes(o.status)))
+  const historyOrders = applyFilters(orders.filter((o) => TERMINAL_STATUSES.includes(o.status)))
   const openComandas = comandas.filter((c) => c.status === 'aberta')
   const awaitingPay = comandas.filter((c) => c.status === 'aguardando_pagamento')
   const closedComandas = comandas.filter((c) => c.status === 'paga' || c.status === 'fechada')
@@ -612,7 +614,7 @@ function AdminPage() {
                 <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nome do cliente..." className="border-white/10 bg-white/5 pl-9" />
               </div>
               {['local', 'delivery', 'history'].includes(tab) && (
-                <FiltersBar filters={filters} setFilters={setFilters} tab={tab} statuses={tab === 'delivery' ? DELIVERY_STATUSES : LOCAL_STATUSES} />
+                <FiltersBar filters={filters} setFilters={setFilters} tab={tab} statuses={tab === 'delivery' ? DELIVERY_STATUSES : tab === 'history' ? [...new Set([...LOCAL_STATUSES, ...DELIVERY_STATUSES, 'Não Entregue', 'Cancelado'])] : LOCAL_STATUSES} />
               )}
             </>
           )}
@@ -1772,7 +1774,7 @@ function SettingsTab() {
 function FiltersBar({ filters, setFilters, tab, statuses }) {
   const [open, setOpen] = useState(false)
   const count = Object.values(filters).filter((v) => v).length
-  const clear = () => setFilters({ status: '', minValue: '', maxValue: '', table: '', address: '', dateFrom: '', dateTo: '', paymentStatus: '', paymentMethod: '', deliveryStatus: '' })
+  const clear = () => setFilters({ type: '', status: '', minValue: '', maxValue: '', table: '', address: '', dateFrom: '', dateTo: '', paymentStatus: '', paymentMethod: '', deliveryStatus: '' })
   return (
     <div className="mb-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -1830,6 +1832,17 @@ function FiltersBar({ filters, setFilters, tab, statuses }) {
             )}
             {tab === 'history' && (
               <>
+                <div>
+                  <Label className="text-xs">Tipo de venda</Label>
+                  <Select value={filters.type || 'all'} onValueChange={(v) => setFilters({ ...filters, type: v === 'all' ? '' : v })}>
+                    <SelectTrigger className="mt-1 border-white/10 bg-white/5"><SelectValue placeholder="Todos" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos</SelectItem>
+                      <SelectItem value="local">🍽️ Local</SelectItem>
+                      <SelectItem value="delivery">🛵 Delivery</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div>
                   <Label className="text-xs">Status do pagamento</Label>
                   <Select value={filters.paymentStatus || 'all'} onValueChange={(v) => setFilters({ ...filters, paymentStatus: v === 'all' ? '' : v })}>

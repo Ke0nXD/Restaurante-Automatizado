@@ -1171,7 +1171,7 @@ async function handlePatch(request, pathParts) {
         const driverDeliveredAt = now
         // Payment confirmation by driver (for card_delivery / cash_delivery)
         const paymentConfirmed = body.paymentConfirmed === true
-        const order = await db.collection('orders').findOne({ id })
+        const order = await db.collection('orders').findOne({ id: targetId })
         const isOnDelivery = order?.payment?.method === 'card_delivery' || order?.payment?.method === 'cash_delivery'
         // RULE: if driver explicitly says NOT paid (paymentConfirmed=false on a method that requires confirmation), force "Não Entregue"
         let effectiveStatus = body.deliveryStatus
@@ -1203,7 +1203,10 @@ async function handlePatch(request, pathParts) {
           updates.status = 'Não Entregue'
           entries.push({ status: 'Não Entregue', at: now, note: effectiveObs })
         } else {
-          entries.push({ status: 'Entregue (aguardando confirmação cliente)', at: now })
+          // Driver delivered → move order to Finalizado (admin/history view).
+          // Customer can still confirm later via /confirm-delivery (purely informational).
+          updates.status = 'Finalizado'
+          entries.push({ status: 'Entregue pelo motoboy (aguardando confirmação do cliente)', at: now })
         }
       }
       // Payment status/method update
