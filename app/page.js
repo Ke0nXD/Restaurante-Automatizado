@@ -20,7 +20,7 @@ import { useRouter } from 'next/navigation'
 import {
   ShoppingCart, Search, MapPin, Home, ArrowLeft, Plus, Minus, Trash2, ChefHat,
   Utensils, Bike, Check, Clock, CreditCard, Banknote, QrCode, MessageCircle,
-  User, LogIn, LogOut, LayoutDashboard, Eye, Copy, CheckCircle2, Loader2, Receipt,
+  User, LogIn, LogOut, LayoutDashboard, Eye, Copy, CheckCircle2, Loader2, Receipt, Info,
 } from 'lucide-react'
 import { getUser, getToken, clearAuth, authHeaders } from '@/lib/auth'
 import { useBranding, BrandLogo } from '@/lib/branding'
@@ -230,7 +230,16 @@ function App() {
         customer: { name: customer.name || 'Visitante', phone: customer.phone || '' },
       }
       if (orderType === 'delivery') {
-        payload.address = { street: customer.address, neighborhood: customer.neighborhood, city: customer.city, zip: customer.zip, state: customer.state }
+        payload.address = {
+          street: address.street,
+          number: address.number,
+          district: address.district,
+          complement: address.complement || '',
+          reference: address.reference || '',
+          cep: address.cep || '',
+          city: address.city,
+          state: address.state || '',
+        }
         const pay = { method: paymentMethod }
         if (paymentMethod === 'cash_delivery' && changeNeeded && Number(changeFor) >= cartTotal) {
           pay.changeNeeded = true
@@ -295,6 +304,11 @@ function App() {
 
         {/* Top-right user menu */}
         <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
+          <Link href="/sobre">
+            <Button size="sm" className="bg-brand-gradient text-white shadow-md shadow-amber-500/20 hover:opacity-90">
+              <Info className="mr-1 h-4 w-4" /> Sobre
+            </Button>
+          </Link>
           {authUser ? (
             <>
               {['owner_admin', 'admin', 'attendant', 'delivery_driver'].includes(authUser.role) && (
@@ -526,6 +540,12 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Link href="/sobre">
+              <Button size="sm" className="bg-brand-gradient text-white shadow-md shadow-amber-500/20 hover:opacity-90">
+                <Info className="h-4 w-4 sm:mr-1" />
+                <span className="hidden sm:inline">Sobre</span>
+              </Button>
+            </Link>
             {authUser && (
               <Link href="/minha-conta">
                 <Button variant="outline" size="sm" className="border-white/10 bg-white/5 hover:bg-white/10">

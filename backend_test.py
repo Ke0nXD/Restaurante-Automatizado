@@ -571,8 +571,226 @@ class TestRunner:
             print("⚠️ Some tests FAILED - review details above")
             
         return passed == total
+    
+    def test_delivery_address_validation(self):
+        """Test the 'Endereço obrigatório' bug fix in checkout delivery"""
+        print("\n=== Testing Delivery Address Validation Fix ===")
+        
+        # Test 1: Valid delivery order with complete address
+        print("\n1. Testing valid delivery order with complete address...")
+        
+        valid_payload = {
+            "type": "delivery",
+            "items": [{"productId": "p-burger-classic", "quantity": 1}],
+            "customer": {"name": "João Teste", "phone": "11999998888"},
+            "address": {
+                "street": "Rua das Flores",
+                "number": "123",
+                "district": "Centro",
+                "complement": "Apto 4",
+                "reference": "Próximo ao mercado",
+                "cep": "01234-567",
+                "city": "São Paulo",
+                "state": "SP"
+            },
+            "payment": {"method": "pix"}
+        }
+        
+        try:
+            response = requests.post(f"{API_BASE}/orders", json=valid_payload, timeout=10)
+            
+            if response.status_code == 201:
+                data = response.json()
+                
+                # Verify address fields are saved correctly
+                order_address = data.get('address', {})
+                if (order_address.get('street') == "Rua das Flores" and
+                    order_address.get('city') == "São Paulo"):
+                    self.log_result("Valid delivery address accepted", True, 
+                                  f"Address saved: {order_address.get('street')}, {order_address.get('city')}")
+                    order_id = data.get('id')
+                    if order_id:
+                        self.created_orders.append(order_id)
+                else:
+                    self.log_result("Valid delivery address accepted", False, 
+                                  f"Address fields incorrect: {order_address}")
+            else:
+                self.log_result("Valid delivery address accepted", False, 
+                              f"Expected 201, got {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_result("Valid delivery address accepted", False, f"Error: {e}")
+        
+        # Test 2: Valid delivery order with cash_delivery and change
+        print("\n2. Testing cash_delivery with change...")
+        
+        cash_payload = {
+            "type": "delivery",
+            "items": [{"productId": "p-burger-classic", "quantity": 1}],
+            "customer": {"name": "Maria Silva", "phone": "11888887777"},
+            "address": {
+                "street": "Av. Paulista",
+                "number": "1000",
+                "district": "Bela Vista",
+                "complement": "Sala 101",
+                "reference": "Em frente ao metrô",
+                "cep": "01310-100",
+                "city": "São Paulo",
+                "state": "SP"
+            },
+            "payment": {
+                "method": "cash_delivery",
+                "changeNeeded": True,
+                "changeFor": 50
+            }
+        }
+        
+        try:
+            response = requests.post(f"{API_BASE}/orders", json=cash_payload, timeout=10)
+            
+            if response.status_code == 201:
+                data = response.json()
+                
+                # Verify payment details
+                payment = data.get('payment', {})
+                if payment.get('changeFor') == 50:
+                    self.log_result("Cash delivery with change", True, 
+                                  f"Change amount: {payment.get('changeFor')}")
+                    order_id = data.get('id')
+                    if order_id:
+                        self.created_orders.append(order_id)
+                else:
+                    self.log_result("Cash delivery with change", False, 
+                                  f"Change amount incorrect: {payment.get('changeFor')}")
+                    
+            else:
+                self.log_result("Cash delivery with change", False, 
+                              f"Expected 201, got {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_result("Cash delivery with change", False, f"Error: {e}")
+        
+        # Test 3: Edge case - missing address.street should return 400
+        print("\n3. Testing missing address.street (should return 400)...")
+        
+        invalid_payload = {
+            "type": "delivery",
+            "items": [{"productId": "p-burger-classic", "quantity": 1}],
+            "customer": {"name": "Pedro Santos", "phone": "11777776666"},
+            "address": {
+                "number": "456",
+                "district": "Vila Madalena",
+                "city": "São Paulo",
+                "state": "SP"
+                # Missing street field
+            },
+            "payment": {"method": "pix"}
+        }
+        
+        try:
+            response = requests.post(f"{API_BASE}/orders", json=invalid_payload, timeout=10)
+            
+            if response.status_code == 400:
+                data = response.json()
+                error_msg = data.get('error', '')
+                if error_msg == 'Endereço obrigatório':
+                    self.log_result("Missing street validation", True, 
+                                  f"Correct error message: '{error_msg}'")
+                else:
+                    self.log_result("Missing street validation", False, 
+                                  f"Wrong error message: '{error_msg}'")
+            else:
+                self.log_result("Missing street validation", False, 
+                              f"Expected 400, got {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_result("Missing street validation", False, f"Error: {e}")
+        
+        # Test 4: Edge case - empty address.street should return 400
+        print("\n4. Testing empty address.street (should return 400)...")
+        
+        empty_street_payload = {
+            "type": "delivery",
+            "items": [{"productId": "p-burger-classic", "quantity": 1}],
+            "customer": {"name": "Ana Costa", "phone": "11666665555"},
+            "address": {
+                "street": "",  # Empty string
+                "number": "789",
+                "district": "Moema",
+                "city": "São Paulo",
+                "state": "SP"
+            },
+            "payment": {"method": "pix"}
+        }
+        
+        try:
+            response = requests.post(f"{API_BASE}/orders", json=empty_street_payload, timeout=10)
+            
+            if response.status_code == 400:
+                data = response.json()
+                error_msg = data.get('error', '')
+                if error_msg == 'Endereço obrigatório':
+                    self.log_result("Empty street validation", True, 
+                                  f"Correct error message: '{error_msg}'")
+                else:
+                    self.log_result("Empty street validation", False, 
+                                  f"Wrong error message: '{error_msg}'")
+            else:
+                self.log_result("Empty street validation", False, 
+                              f"Expected 400, got {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_result("Empty street validation", False, f"Error: {e}")
+        
+        # Test 5: Edge case - null address should return 400
+        print("\n5. Testing null address (should return 400)...")
+        
+        null_address_payload = {
+            "type": "delivery",
+            "items": [{"productId": "p-burger-classic", "quantity": 1}],
+            "customer": {"name": "Carlos Lima", "phone": "11555554444"},
+            "address": None,
+            "payment": {"method": "pix"}
+        }
+        
+        try:
+            response = requests.post(f"{API_BASE}/orders", json=null_address_payload, timeout=10)
+            
+            if response.status_code == 400:
+                data = response.json()
+                error_msg = data.get('error', '')
+                if error_msg == 'Endereço obrigatório':
+                    self.log_result("Null address validation", True, 
+                                  f"Correct error message: '{error_msg}'")
+                else:
+                    self.log_result("Null address validation", False, 
+                                  f"Wrong error message: '{error_msg}'")
+            else:
+                self.log_result("Null address validation", False, 
+                              f"Expected 400, got {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_result("Null address validation", False, f"Error: {e}")
 
 if __name__ == "__main__":
     runner = TestRunner()
-    success = runner.run_all_tests()
-    exit(0 if success else 1)
+    
+    # Run only the delivery address validation tests
+    print("Testing Delivery Address Validation Fix")
+    print(f"API Base: {API_BASE}")
+    print(f"Timestamp: {datetime.now().isoformat()}")
+    
+    runner.test_delivery_address_validation()
+    
+    # Print summary
+    print(f"\n=== Test Summary ===")
+    passed = sum(1 for r in runner.test_results if r['success'])
+    total = len(runner.test_results)
+    print(f"Tests passed: {passed}/{total}")
+    
+    if passed == total:
+        print("🎉 All tests PASSED!")
+    else:
+        print("⚠️ Some tests FAILED - review details above")
+        
+    exit(0 if passed == total else 1)
