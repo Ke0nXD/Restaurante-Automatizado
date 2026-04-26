@@ -101,7 +101,7 @@ Antes de iniciar, certifique-se de ter instalado:
 
 ### 1. Clone o repositório
 ```bash
-git clone <url-do-repositorio>
+git clone https://github.com/Ke0nXD/Restaurante-Automatizado.git
 cd sabor-arte
 ```
 
