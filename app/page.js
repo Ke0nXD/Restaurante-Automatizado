@@ -50,6 +50,8 @@ function App() {
     reference: '', city: '', state: '',
   })
   const [paymentMethod, setPaymentMethod] = useState('pix')
+  const [changeNeeded, setChangeNeeded] = useState(false)
+  const [changeFor, setChangeFor] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [completedOrder, setCompletedOrder] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -227,11 +229,16 @@ function App() {
         })),
         customer: { name: customer.name || 'Visitante', phone: customer.phone || '' },
       }
-      if (orderType === 'local') {
-        payload.table = tableNumber
+      if (orderType === 'delivery') {
+        payload.address = { street: customer.address, neighborhood: customer.neighborhood, city: customer.city, zip: customer.zip, state: customer.state }
+        const pay = { method: paymentMethod }
+        if (paymentMethod === 'cash_delivery' && changeNeeded && Number(changeFor) >= cartTotal) {
+          pay.changeNeeded = true
+          pay.changeFor = Number(changeFor)
+        }
+        payload.payment = pay
       } else {
-        payload.address = address
-        payload.payment = { method: paymentMethod }
+        payload.table = tableNumber
       }
       const res = await fetch('/api/orders', {
         method: 'POST',
@@ -1084,6 +1091,44 @@ function CheckoutView({
                 {paymentMethod === 'card_delivery' && '💳 Pagamento será feito na entrega com o motoboy. Status permanece "Pendente entrega" até a confirmação.'}
                 {paymentMethod === 'cash_delivery' && '💵 Separe o valor em dinheiro. Pagamento na entrega — tenha troco preparado, se possível.'}
               </div>
+              {paymentMethod === 'cash_delivery' && (
+                <div className="mt-3 space-y-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                  <div>
+                    <Label className="text-xs">Precisa de troco?</Label>
+                    <RadioGroup value={changeNeeded ? 'yes' : 'no'} onValueChange={(v) => { setChangeNeeded(v === 'yes'); if (v === 'no') setChangeFor('') }} className="mt-2 flex gap-4">
+                      <label className="flex cursor-pointer items-center gap-2 text-sm">
+                        <RadioGroupItem value="no" /> Não preciso de troco
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-2 text-sm">
+                        <RadioGroupItem value="yes" /> Sim, vou pagar com nota maior
+                      </label>
+                    </RadioGroup>
+                  </div>
+                  {changeNeeded && (
+                    <div>
+                      <Label className="text-xs">Troco para quanto?</Label>
+                      <div className="relative mt-1">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          inputMode="decimal"
+                          placeholder={String(Math.ceil(cartTotal / 10) * 10)}
+                          value={changeFor}
+                          onChange={(e) => setChangeFor(e.target.value)}
+                          className="border-white/10 bg-white/5 pl-9"
+                        />
+                      </div>
+                      {changeFor && Number(changeFor) > 0 && Number(changeFor) < cartTotal && (
+                        <p className="mt-1 text-xs text-red-400">⚠️ Valor menor que o total ({brl(cartTotal)}). Ajuste para um valor maior.</p>
+                      )}
+                      {changeFor && Number(changeFor) >= cartTotal && (
+                        <p className="mt-1 text-xs text-emerald-300">Troco aproximado: <strong>{brl(Number(changeFor) - cartTotal)}</strong></p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
 

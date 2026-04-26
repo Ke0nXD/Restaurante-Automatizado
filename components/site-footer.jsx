@@ -40,7 +40,7 @@ export function SiteFooter() {
             <p className="text-sm text-muted-foreground whitespace-pre-line">{f.openingHours}</p>
           </div>
         )}
-        <div className="space-y-1">
+        <div className="space-y-2">
           {f.deliveryNotice && (
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-sm font-semibold"><Bike className="h-4 w-4 text-brand" /> Área atendida</div>
@@ -48,10 +48,11 @@ export function SiteFooter() {
             </div>
           )}
           {f.instagramUrl && (
-            <Link href={f.instagramUrl} target="_blank" className="mt-2 inline-flex items-center gap-1 text-sm text-pink-400 hover:underline">
+            <Link href={f.instagramUrl} target="_blank" className="inline-flex items-center gap-1 text-sm text-pink-400 hover:underline">
               <Instagram className="h-4 w-4" /> Instagram
             </Link>
           )}
+          <Link href="/sobre" className="block text-sm text-brand hover:underline">📘 Sobre o estabelecimento</Link>
         </div>
       </div>
       {f.copyrightText && (

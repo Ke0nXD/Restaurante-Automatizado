@@ -21,12 +21,13 @@ import {
   ChefHat, LogOut, LayoutDashboard, Utensils, Bike, ClipboardList, Package,
   Tag, Users, Plus, Pencil, Trash2, Clock, Check, TrendingUp, DollarSign, ShoppingBag,
   Bell, CreditCard, Banknote, QrCode, CheckCircle2, Search, Menu, X, Calendar,
-  Sparkles, Image as ImageIcon, Star, Flame, Settings, Upload, Palette, Sun, Moon, Monitor, Copy,
+  Sparkles, Image as ImageIcon, Star, Flame, Settings, Upload, Palette, Sun, Moon, Monitor, Copy, Info,
 } from 'lucide-react'
 import { apiFetch, getUser, clearAuth, getToken, authHeaders } from '@/lib/auth'
 import { refreshBranding, BrandLogo, useBranding } from '@/lib/branding'
 import { useTheme, DEFAULT_THEME, contrastRatio, wcagLabel } from '@/lib/theme'
 import { ImageField } from '@/components/image-field'
+import { RichText } from '@/components/rich-text'
 
 const brl = (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const LOCAL_STATUSES = ['Recebido', 'Em preparo', 'Pronto', 'Entregue', 'Finalizado']
@@ -59,6 +60,7 @@ const TABS = [
   { value: 'payments', label: 'Pagamentos', Icon: CreditCard, roles: ['owner_admin', 'admin'] },
   { value: 'theme', label: 'Tema', Icon: Palette, roles: ['owner_admin', 'admin'] },
   { value: 'footer', label: 'Rodapé', Icon: LayoutDashboard, roles: ['owner_admin', 'admin'] },
+  { value: 'about', label: 'Sobre', Icon: Info, roles: ['owner_admin', 'admin'] },
   { value: 'settings', label: 'Configurações', Icon: Settings, roles: ['owner_admin', 'admin'] },
   { value: 'users', label: 'Usuários', Icon: Users, roles: ['owner_admin', 'admin'] },
 ]
@@ -402,11 +404,29 @@ function AdminPage() {
     })
   }
 
-  const saveDeliveryStatus = async (orderId, deliveryStatus, deliveryObservation) => {
+  const deleteComanda = async (comandaId) => {
+    askConfirm({
+      title: 'Apagar esta comanda?',
+      description: 'Apenas comandas FECHADAS/PAGAS podem ser apagadas. A comanda e todos os pedidos vinculados serão removidos permanentemente.',
+      confirmLabel: 'Apagar comanda',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await apiFetch(`/api/admin/comandas/${comandaId}`, { method: 'DELETE' })
+          setComandas((prev) => prev.filter((c) => c.id !== comandaId))
+          // Also remove orders linked to this comanda from local state
+          setOrders((prev) => prev.filter((o) => o.comandaId !== comandaId))
+          toast.success('Comanda excluída')
+        } catch (e) { toast.error(e.message) }
+      },
+    })
+  }
+
+  const saveDeliveryStatus = async (orderId, deliveryStatus, deliveryObservation, paymentConfirmed) => {
     try {
       const updated = await apiFetch(`/api/admin/orders/${orderId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ deliveryStatus, deliveryObservation }),
+        body: JSON.stringify({ deliveryStatus, deliveryObservation, paymentConfirmed }),
       })
       setOrders((prev) => prev.map((o) => o.id === orderId ? updated : o))
       toast.success(`Entrega marcada como "${deliveryStatus}"`)
@@ -604,6 +624,8 @@ function AdminPage() {
               onPayRequest={(c) => setPayDialog({ comanda: c, method: c.paymentMethod || 'Dinheiro' })}
               onAction={comandaAction}
               onStatusChange={changeStatus}
+              onDeleteComanda={deleteComanda}
+              isOwner={isOwner}
               loading={loading}
             />
           )}
@@ -629,6 +651,7 @@ function AdminPage() {
           {tab === 'payments' && isOwner && <PaymentsTab methods={paymentMethodsConfig} onSave={savePaymentMethodsConfig} />}
           {tab === 'theme' && isOwner && <ThemeTab />}
           {tab === 'footer' && isOwner && <FooterTab />}
+          {tab === 'about' && isOwner && <AboutTab />}
         </div>
       </div>
 
@@ -945,7 +968,7 @@ function DashboardTab({ stats, orders }) {
   )
 }
 
-function ComandasTab({ open, awaiting, closed, onPayRequest, onAction, onStatusChange, loading }) {
+function ComandasTab({ open, awaiting, closed, onPayRequest, onAction, onStatusChange, onDeleteComanda, isOwner, loading }) {
   return (
     <Tabs defaultValue="awaiting">
       <TabsList className="mb-4 flex w-full flex-wrap bg-black/30">
@@ -955,12 +978,12 @@ function ComandasTab({ open, awaiting, closed, onPayRequest, onAction, onStatusC
       </TabsList>
       <TabsContent value="awaiting"><ComandaList list={awaiting} onPayRequest={onPayRequest} onAction={onAction} onStatusChange={onStatusChange} loading={loading} emptyMsg="Nenhuma conta aguardando pagamento" highlight /></TabsContent>
       <TabsContent value="open"><ComandaList list={open} onPayRequest={onPayRequest} onAction={onAction} onStatusChange={onStatusChange} loading={loading} emptyMsg="Nenhuma conta aberta" /></TabsContent>
-      <TabsContent value="closed"><ComandaList list={closed} onPayRequest={onPayRequest} onAction={onAction} onStatusChange={onStatusChange} loading={loading} emptyMsg="Nenhuma conta fechada" /></TabsContent>
+      <TabsContent value="closed"><ComandaList list={closed} onPayRequest={onPayRequest} onAction={onAction} onStatusChange={onStatusChange} onDeleteComanda={isOwner ? onDeleteComanda : null} loading={loading} emptyMsg="Nenhuma conta fechada" /></TabsContent>
     </Tabs>
   )
 }
 
-function ComandaList({ list, onPayRequest, onAction, onStatusChange, loading, emptyMsg, highlight }) {
+function ComandaList({ list, onPayRequest, onAction, onStatusChange, onDeleteComanda, loading, emptyMsg, highlight }) {
   if (loading) return <p className="text-muted-foreground">Carregando...</p>
   if (!list.length) return <Card className="border-white/10 bg-zinc-900/60"><CardContent className="p-10 text-center text-muted-foreground">{emptyMsg}</CardContent></Card>
   return (
@@ -987,6 +1010,11 @@ function ComandaList({ list, onPayRequest, onAction, onStatusChange, loading, em
                 <div className="text-right">
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Total da conta</div>
                   <div className="text-2xl font-bold text-amber-400">{brl(c.total)}</div>
+                  {onDeleteComanda && (c.status === 'paga' || c.status === 'fechada') && (
+                    <Button size="sm" variant="outline" onClick={() => onDeleteComanda(c.id)} className="mt-2 h-7 border-red-500/30 bg-red-500/10 text-xs text-red-300 hover:bg-red-500/20">
+                      <Trash2 className="mr-1 h-3 w-3" /> Apagar
+                    </Button>
+                  )}
                 </div>
               </div>
 
@@ -1067,6 +1095,12 @@ function OrdersList({ orders, statuses, onStatusChange, loading, isOwner, isDriv
               <div className="mt-1 text-sm font-medium">{o.customer?.name}{o.customer?.phone && <span className="text-muted-foreground"> · {o.customer.phone}</span>}</div>
               <div className="text-xs text-muted-foreground">{new Date(o.createdAt).toLocaleString('pt-BR')}</div>
               {o.type==='delivery' && o.address && <div className="mt-1 text-xs text-muted-foreground">📍 {o.address.street}, {o.address.number} · {o.address.district} · {o.address.city}</div>}
+              {o.payment?.changeFor && o.payment?.method === 'cash_delivery' && (
+                <div className="mt-1 rounded-md bg-emerald-500/10 px-2 py-1 text-xs text-emerald-300">
+                  💵 <strong>Troco para R$ {Number(o.payment.changeFor).toFixed(2)}</strong>
+                  {o.total && ` (devolver R$ ${(Number(o.payment.changeFor) - Number(o.total)).toFixed(2)})`}
+                </div>
+              )}
               {o.delivery?.notDeliveredReason && (
                 <div className="mt-1 rounded-md bg-red-500/10 px-2 py-1 text-xs text-red-300">
                   ⚠️ <strong>Motivo da não entrega:</strong> {o.delivery.notDeliveredReason}
@@ -1368,27 +1402,62 @@ function PaymentsTab({ methods, onSave }) {
 
 function DeliveryActionDialog({ dialog, onClose, onConfirm }) {
   if (!dialog) return null
-  const { order, status, observation } = dialog
+  const { order, status, observation, paymentConfirmed } = dialog
+  const isOnDelivery = order?.payment?.method === 'card_delivery' || order?.payment?.method === 'cash_delivery'
+  const alreadyPaid = order?.payment?.status === 'pago'
+  // Step 1: payment confirmation (only for card/cash on delivery)
+  // Step 2: delivery status
+  const showStep2 = !isOnDelivery || alreadyPaid || paymentConfirmed === true
+  const obsRequired = (status === 'Não Entregue') || (isOnDelivery && paymentConfirmed === false)
   return (
     <Dialog open={!!dialog} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="border-white/10 bg-zinc-950">
         <DialogHeader><DialogTitle>Confirmar entrega — Pedido #{order.id.slice(0,8).toUpperCase()}</DialogTitle></DialogHeader>
         <div className="space-y-4">
-          <RadioGroup value={status} onValueChange={(v) => onClose({ ...dialog, status: v })} className="space-y-2">
-            <label className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${status === 'Entregue' ? 'border-emerald-500 bg-emerald-500/5' : 'border-white/10'}`}>
-              <RadioGroupItem value="Entregue" /><Check className="h-5 w-5 text-emerald-400" /><span>Entregue com sucesso</span>
-            </label>
-            <label className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${status === 'Não Entregue' ? 'border-red-500 bg-red-500/5' : 'border-white/10'}`}>
-              <RadioGroupItem value="Não Entregue" /><X className="h-5 w-5 text-red-400" /><span>Não Entregue</span>
-            </label>
-          </RadioGroup>
-          {status === 'Não Entregue' && (
+          {/* Step 1: Payment confirmation (for card_delivery / cash_delivery only) */}
+          {isOnDelivery && !alreadyPaid && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+              <Label className="mb-2 block text-sm font-semibold">1. Cliente efetuou o pagamento?</Label>
+              <p className="mb-2 text-xs text-muted-foreground">
+                Método: <strong>{order.payment.method === 'card_delivery' ? 'Cartão na entrega' : 'Dinheiro na entrega'}</strong>
+                {order.payment.changeFor && ` · Troco para R$ ${order.payment.changeFor.toFixed(2)}`}
+              </p>
+              <RadioGroup value={paymentConfirmed === true ? 'yes' : paymentConfirmed === false ? 'no' : ''} onValueChange={(v) => onClose({ ...dialog, paymentConfirmed: v === 'yes' })} className="grid grid-cols-2 gap-2">
+                <label className={`flex cursor-pointer items-center gap-2 rounded-lg border p-2 text-sm ${paymentConfirmed === true ? 'border-emerald-500 bg-emerald-500/10 text-emerald-300' : 'border-white/10'}`}>
+                  <RadioGroupItem value="yes" /> ✅ Cliente pagou
+                </label>
+                <label className={`flex cursor-pointer items-center gap-2 rounded-lg border p-2 text-sm ${paymentConfirmed === false ? 'border-red-500 bg-red-500/10 text-red-300' : 'border-white/10'}`}>
+                  <RadioGroupItem value="no" /> ❌ Cliente não pagou
+                </label>
+              </RadioGroup>
+              {paymentConfirmed === false && (
+                <div className="mt-2 rounded border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-300">
+                  ⚠️ Pedido será marcado automaticamente como <strong>Não Entregue</strong>. Adicione observação abaixo.
+                </div>
+              )}
+            </div>
+          )}
+          {/* Step 2: Delivery status — visible only after payment is OK or not required */}
+          {showStep2 && (
+            <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <Label className="mb-2 block text-sm font-semibold">{isOnDelivery && !alreadyPaid ? '2. ' : ''}Status da entrega</Label>
+              <RadioGroup value={status} onValueChange={(v) => onClose({ ...dialog, status: v })} className="space-y-2">
+                <label className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${status === 'Entregue' ? 'border-emerald-500 bg-emerald-500/5' : 'border-white/10'}`}>
+                  <RadioGroupItem value="Entregue" /><Check className="h-5 w-5 text-emerald-400" /><span>Entregue com sucesso</span>
+                </label>
+                <label className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${status === 'Não Entregue' ? 'border-red-500 bg-red-500/5' : 'border-white/10'}`}>
+                  <RadioGroupItem value="Não Entregue" /><X className="h-5 w-5 text-red-400" /><span>Não Entregue</span>
+                </label>
+              </RadioGroup>
+            </div>
+          )}
+          {(status === 'Não Entregue' || (isOnDelivery && paymentConfirmed === false)) && (
             <div>
               <Label className="mb-1 block">Motivo (obrigatório)</Label>
               <Textarea
                 value={observation || ''}
                 onChange={(e) => onClose({ ...dialog, observation: e.target.value })}
-                placeholder="Ex.: cliente não estava no local, endereço incorreto, pedido recusado..."
+                placeholder="Ex.: cliente não estava no local, endereço incorreto, pedido recusado, cliente sem dinheiro..."
                 className="min-h-24 border-white/10 bg-white/5"
               />
             </div>
@@ -1397,9 +1466,9 @@ function DeliveryActionDialog({ dialog, onClose, onConfirm }) {
         <DialogFooter>
           <Button variant="outline" onClick={() => onClose()}>Cancelar</Button>
           <Button
-            disabled={status === 'Não Entregue' && !observation}
-            onClick={() => onConfirm(order.id, status, observation)}
-            className={status === 'Entregue' ? 'bg-gradient-to-r from-emerald-500 to-green-600' : 'bg-gradient-to-r from-red-500 to-orange-600'}
+            disabled={(isOnDelivery && !alreadyPaid && paymentConfirmed === undefined) || (obsRequired && !observation) || (showStep2 && !status && (paymentConfirmed !== false))}
+            onClick={() => onConfirm(order.id, paymentConfirmed === false ? 'Não Entregue' : status, observation, paymentConfirmed)}
+            className={(status === 'Entregue' && paymentConfirmed !== false) ? 'bg-gradient-to-r from-emerald-500 to-green-600' : 'bg-gradient-to-r from-red-500 to-orange-600'}
           >
             <CheckCircle2 className="mr-1 h-4 w-4" /> Confirmar
           </Button>
@@ -1477,6 +1546,93 @@ function FooterTab() {
     </div>
   )
 }
+
+function AboutTab() {
+  const [form, setForm] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
+  useEffect(() => {
+    apiFetch('/api/admin/about').then(setForm).catch(() => setForm({ title: '', subtitle: '', content: '' }))
+  }, [])
+  const save = async () => {
+    setSaving(true)
+    try {
+      const updated = await apiFetch('/api/admin/about', { method: 'PATCH', body: JSON.stringify(form) })
+      setForm(updated)
+      toast.success('Página "Sobre" salva — visível em /sobre')
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+  const insertSnippet = (snippet) => {
+    setForm({ ...form, content: (form.content || '') + (form.content?.endsWith('\n') ? '' : '\n') + snippet + '\n' })
+  }
+  if (!form) return <div className="py-10 text-center text-muted-foreground">Carregando...</div>
+  return (
+    <div className="mx-auto max-w-5xl space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold">📘 Sobre o Estabelecimento</h2>
+          <p className="text-sm text-muted-foreground">Página pública editável: <code className="rounded bg-white/5 px-1">/sobre</code> · Suporta markdown leve (# título, **negrito**, *itálico*, - listas).</p>
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setShowPreview(!showPreview)} className="border-white/10">
+            {showPreview ? 'Ocultar preview' : 'Mostrar preview'}
+          </Button>
+          <Button size="sm" onClick={save} disabled={saving} className="bg-brand-gradient">{saving ? 'Salvando...' : 'Salvar'}</Button>
+        </div>
+      </div>
+
+      <Card className="border-white/10 bg-zinc-900/60">
+        <CardContent className="grid gap-4 p-6 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <Label className="text-xs">Título</Label>
+            <Input value={form.title || ''} onChange={(e) => setForm({ ...form, title: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+          </div>
+          <div className="md:col-span-2">
+            <Label className="text-xs">Subtítulo</Label>
+            <Input value={form.subtitle || ''} onChange={(e) => setForm({ ...form, subtitle: e.target.value })} className="mt-1 border-white/10 bg-white/5" />
+          </div>
+          <div className="md:col-span-2">
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <Label className="text-xs">Conteúdo</Label>
+              <div className="ml-auto flex flex-wrap gap-1 text-[11px]">
+                <Button type="button" size="sm" variant="outline" onClick={() => insertSnippet('# Título principal')} className="h-7 border-white/10 px-2">H1</Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => insertSnippet('## Subtítulo')} className="h-7 border-white/10 px-2">H2</Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => insertSnippet('### Seção')} className="h-7 border-white/10 px-2">H3</Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => insertSnippet('**texto em negrito**')} className="h-7 border-white/10 px-2 font-bold">B</Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => insertSnippet('*texto em itálico*')} className="h-7 border-white/10 px-2 italic">i</Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => insertSnippet('- item da lista\n- outro item')} className="h-7 border-white/10 px-2">• Lista</Button>
+              </div>
+            </div>
+            <Textarea
+              rows={18}
+              value={form.content || ''}
+              onChange={(e) => setForm({ ...form, content: e.target.value })}
+              placeholder={'# Nossa história\n\nFundado em **2015**...\n\n## Diferenciais\n\n- Ingredientes locais\n- Atendimento personalizado'}
+              className="mt-1 border-white/10 bg-black/30 font-mono text-sm"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {showPreview && (
+        <Card className="border-amber-500/30 bg-zinc-900/60">
+          <CardContent className="p-6 sm:p-8">
+            <div className="mb-3 flex items-center gap-2 border-b border-border pb-2">
+              <Info className="h-4 w-4 text-brand" />
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">Preview</span>
+            </div>
+            <h1 className="text-3xl font-bold">{form.title}</h1>
+            {form.subtitle && <p className="mt-1 text-muted-foreground">{form.subtitle}</p>}
+            <div className="mt-4">
+              <RichText source={form.content || ''} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}
+
 
 function SettingsTab() {
   const current = useBranding()

@@ -232,6 +232,18 @@ async function ensureSeed(db) {
       updatedAt: new Date().toISOString(),
     })
   }
+
+  // Seed about page settings
+  const about = await db.collection('settings').findOne({ id: 'about' })
+  if (!about) {
+    await db.collection('settings').insertOne({
+      id: 'about',
+      title: 'Sobre o Sabor & Arte',
+      subtitle: 'Onde a gastronomia encontra a arte',
+      content: `# Nossa história\n\nFundado em **2015** por uma família apaixonada por gastronomia, o Sabor & Arte nasceu do desejo de oferecer uma experiência única, unindo sabores autorais a um ambiente acolhedor.\n\n## Nossos diferenciais\n\n- Ingredientes selecionados de produtores locais\n- Cozinha aberta com vista para o preparo\n- Carta de vinhos curada por sommelier\n- Atendimento personalizado\n\n## Ambiente\n\nNosso espaço é dividido em três áreas: salão principal, mezanino e área externa coberta — todos com **wi-fi gratuito** e acessibilidade total.\n\n## Funcionamento\n\nAtendemos diariamente para almoço, jantar e happy hour. Aceitamos reservas pelo WhatsApp.\n\n## Informações úteis\n\n- Estacionamento conveniado\n- Aceitamos todas as bandeiras\n- Cardápio infantil disponível\n- Pet-friendly na área externa`,
+      updatedAt: new Date().toISOString(),
+    })
+  }
 }
 
 function stripId(doc) {
@@ -417,6 +429,11 @@ async function handleGet(request, pathParts) {
     return NextResponse.json(s ? stripId(s) : {})
   }
 
+  if (resource === 'about') {
+    const s = await db.collection('settings').findOne({ id: 'about' })
+    return NextResponse.json(s ? stripId(s) : {})
+  }
+
   if (resource === 'pix-info') {
     // Public read of non-secret pix info (for UI countdown etc.)
     const s = await db.collection('settings').findOne({ id: 'pix-config' })
@@ -524,8 +541,9 @@ async function handleGet(request, pathParts) {
       if (payStatus) q['payment.status'] = payStatus
       if (payMethod) q['payment.method'] = payMethod
       if (deliveryStatus) q['delivery.status'] = deliveryStatus
-      if (history === '1') q.status = 'Finalizado'
-      else if (history === '0') q.status = { $ne: 'Finalizado' }
+      const TERMINAL = ['Finalizado', 'Não Entregue', 'Cancelado']
+      if (history === '1') q.status = { $in: TERMINAL }
+      else if (history === '0') q.status = { $nin: TERMINAL }
       const orders = await db.collection('orders').find(q).sort({ createdAt: -1 }).toArray()
       return NextResponse.json(orders.map(stripId))
     }
@@ -569,6 +587,10 @@ async function handleGet(request, pathParts) {
     }
     if (id === 'footer') {
       const s = await db.collection('settings').findOne({ id: 'footer' })
+      return NextResponse.json(s ? stripId(s) : {})
+    }
+    if (id === 'about') {
+      const s = await db.collection('settings').findOne({ id: 'about' })
       return NextResponse.json(s ? stripId(s) : {})
     }
     if (id === 'pix-config') {
@@ -838,6 +860,14 @@ async function handlePost(request, pathParts) {
       } else {
         // Card / cash on delivery → payment stays pending until delivered
         order.payment = { method: normalizedMethod, status: 'pendente_entrega' }
+        // Cash change support
+        if (normalizedMethod === 'cash_delivery') {
+          order.payment.changeNeeded = !!payment?.changeNeeded
+          if (payment?.changeNeeded && Number(payment?.changeFor) > 0) {
+            order.payment.changeFor = Number(payment.changeFor)
+            order.payment.changeAmount = Math.max(0, Number(payment.changeFor) - Number(total))
+          }
+        }
       }
     }
     await db.collection('orders').insertOne(order)
@@ -1139,22 +1169,39 @@ async function handlePatch(request, pathParts) {
         if (!['Entregue', 'Não Entregue'].includes(body.deliveryStatus)) return NextResponse.json({ error: 'Status de entrega inválido' }, { status: 400 })
         if (body.deliveryStatus === 'Não Entregue' && !body.deliveryObservation) return NextResponse.json({ error: 'Observação obrigatória para pedido não entregue' }, { status: 400 })
         const driverDeliveredAt = now
-        // When driver marks "Entregue", we set an intermediate state awaiting customer confirmation.
-        // Only "Não Entregue" finalizes immediately.
+        // Payment confirmation by driver (for card_delivery / cash_delivery)
+        const paymentConfirmed = body.paymentConfirmed === true
+        const order = await db.collection('orders').findOne({ id })
+        const isOnDelivery = order?.payment?.method === 'card_delivery' || order?.payment?.method === 'cash_delivery'
+        // RULE: if driver explicitly says NOT paid (paymentConfirmed=false on a method that requires confirmation), force "Não Entregue"
+        let effectiveStatus = body.deliveryStatus
+        let effectiveObs = body.deliveryObservation || ''
+        if (isOnDelivery && body.paymentConfirmed === false) {
+          effectiveStatus = 'Não Entregue'
+          if (!effectiveObs) effectiveObs = 'Cliente não efetuou o pagamento'
+        }
         const newDelivery = {
-          status: body.deliveryStatus === 'Entregue' ? 'Aguardando confirmação cliente' : 'Não Entregue',
-          driverStatus: body.deliveryStatus,
-          observation: body.deliveryObservation || '',
+          status: effectiveStatus === 'Entregue' ? 'Aguardando confirmação cliente' : 'Não Entregue',
+          driverStatus: effectiveStatus,
+          observation: effectiveObs,
           updatedAt: now,
           driverId: guard.user.id,
-          deliveredByDriverAt: body.deliveryStatus === 'Entregue' ? driverDeliveredAt : null,
-          notDeliveredReason: body.deliveryStatus === 'Não Entregue' ? body.deliveryObservation : null,
+          deliveredByDriverAt: effectiveStatus === 'Entregue' ? driverDeliveredAt : null,
+          notDeliveredReason: effectiveStatus === 'Não Entregue' ? effectiveObs : null,
+          paymentConfirmedByDriver: isOnDelivery ? paymentConfirmed : null,
+          paymentConfirmedAt: (isOnDelivery && paymentConfirmed) ? now : null,
         }
         updates.delivery = newDelivery
+        // Update payment.status when driver confirms cash/card delivery payment
+        if (isOnDelivery && paymentConfirmed) {
+          updates['payment.status'] = 'pago'
+          updates['payment.paidAt'] = now
+          updates['payment.confirmedBy'] = `driver:${guard.user.id}`
+        }
         // If "Não Entregue" — finalize order with that status
-        if (body.deliveryStatus === 'Não Entregue') {
+        if (effectiveStatus === 'Não Entregue') {
           updates.status = 'Não Entregue'
-          entries.push({ status: 'Não Entregue', at: now, note: body.deliveryObservation })
+          entries.push({ status: 'Não Entregue', at: now, note: effectiveObs })
         } else {
           entries.push({ status: 'Entregue (aguardando confirmação cliente)', at: now })
         }
@@ -1272,6 +1319,15 @@ async function handlePatch(request, pathParts) {
       const updated = await db.collection('settings').findOne({ id: 'footer' })
       return NextResponse.json(stripId(updated))
     }
+    if (id === 'about') {
+      const updates = { updatedAt: new Date().toISOString() }
+      for (const k of ['title', 'subtitle', 'content']) {
+        if (body[k] !== undefined) updates[k] = body[k]
+      }
+      await db.collection('settings').updateOne({ id: 'about' }, { $set: updates }, { upsert: true })
+      const updated = await db.collection('settings').findOne({ id: 'about' })
+      return NextResponse.json(stripId(updated))
+    }
     if (id === 'pix-config') {
       const ownerCheck = await requireOwner(request, db)
       if (ownerCheck.error) return ownerCheck.error
@@ -1369,6 +1425,21 @@ async function handleDelete(request, pathParts) {
       const owner = await requireOwner(request, db)
       if (owner.error) return owner.error
       await db.collection('users').deleteOne({ id: targetId })
+      return NextResponse.json({ ok: true })
+    }
+    if (id === 'comandas' && targetId) {
+      const owner = await requireOwner(request, db)
+      if (owner.error) return owner.error
+      const c = await db.collection('comandas').findOne({ id: targetId })
+      if (!c) return NextResponse.json({ error: 'Comanda não encontrada' }, { status: 404 })
+      if (!['paga', 'fechada'].includes(c.status)) {
+        return NextResponse.json({ error: 'Apenas comandas fechadas/pagas podem ser apagadas' }, { status: 400 })
+      }
+      // Hard delete + cascade orders linked to this comanda
+      if (c.orderIds?.length) {
+        await db.collection('orders').deleteMany({ id: { $in: c.orderIds } })
+      }
+      await db.collection('comandas').deleteOne({ id: targetId })
       return NextResponse.json({ ok: true })
     }
   }
