@@ -460,7 +460,7 @@ Para dúvidas, sugestões ou bugs, abra uma issue no repositório ou entre em co
 
 <div align="center">
 
-**Feito com ❤️ usando Next.js + MongoDB + Tailwind CSS**
+**Feito usando Next.js + MongoDB + Tailwind CSS**
 
 ⭐ Se este projeto foi útil, não esqueça de dar uma estrela!
 
