@@ -387,6 +387,51 @@ yarn dev   # ao iniciar, o ensureSeed() recria tudo
 
 ---
 
+## 🆘 Troubleshooting (Erros comuns ao rodar local)
+
+### ❌ `TypeError: products.filter is not a function`
+Esse erro aparece quando a API retorna um objeto de erro (ex.: `{error: "..."}`) em vez de um array. **Causas mais comuns:**
+
+1. **MongoDB não está rodando** — verifique:
+   ```bash
+   # macOS
+   brew services list | grep mongo
+   # Linux (systemd)
+   sudo systemctl status mongod
+   # Docker
+   docker ps | grep mongo
+   ```
+   Se não estiver rodando, suba o serviço (veja a seção "Suba o MongoDB" acima).
+
+2. **Variável `MONGO_URL` ausente ou errada no `.env`** — confirme:
+   ```bash
+   cat .env | grep MONGO_URL
+   # Deve mostrar algo como: MONGO_URL=mongodb://localhost:27017
+   ```
+
+3. **`.env` não foi criado** — o repositório não inclui o `.env` (está no `.gitignore`). Crie um seguindo a seção [Configure as variáveis de ambiente](#3-configure-as-variáveis-de-ambiente).
+
+> 💡 A partir desta versão, o frontend é **defensivo**: mesmo com a API retornando erro, a aplicação não trava. Você verá um toast de erro mas conseguirá navegar.
+
+### ❌ `Cannot connect to MongoDB`
+- Confirme que o MongoDB está rodando na porta 27017 (default)
+- Se usa MongoDB Atlas, verifique se seu IP está liberado em "Network Access"
+- Teste a conexão: `mongosh "$MONGO_URL"`
+
+### ❌ Página fica em branco / "Application error"
+- Veja os logs do Next.js no terminal onde rodou `yarn dev`
+- Abra o DevTools (F12) > Console para ver o erro real
+- Confirme que rodou `yarn install` (não `npm install`) — o projeto usa Yarn
+
+### ❌ Login com `admin@sabor.com / admin123` não funciona
+- Apague a base e deixe o seed recriar:
+  ```bash
+  mongosh restaurant_app --eval "db.dropDatabase()"
+  yarn dev   # vai repopular automaticamente
+  ```
+
+---
+
 ## 🤝 Contribuindo
 
 Este projeto segue um workflow simples:

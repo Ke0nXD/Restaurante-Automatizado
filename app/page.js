@@ -118,6 +118,21 @@ function App() {
   }, [])
 
   useEffect(() => {
+    // Helper that always returns an array (avoids crashes when API returns error object)
+    const toArray = async (res) => {
+      try {
+        if (!res.ok) return []
+        const data = await res.json()
+        return Array.isArray(data) ? data : []
+      } catch { return [] }
+    }
+    const toObject = async (res) => {
+      try {
+        if (!res.ok) return null
+        const data = await res.json()
+        return data && typeof data === 'object' && !Array.isArray(data) ? data : null
+      } catch { return null }
+    }
     const load = async () => {
       try {
         const [pRes, cRes, bRes, promoRes, fRes, pmRes] = await Promise.all([
@@ -128,12 +143,12 @@ function App() {
           fetch('/api/products?featured=1'),
           fetch('/api/payment-methods'),
         ])
-        setProducts(await pRes.json())
-        setCategories(await cRes.json())
-        setBanner(await bRes.json())
-        setPromotions(await promoRes.json())
-        setFeatured(await fRes.json())
-        const pm = await pmRes.json()
+        setProducts(await toArray(pRes))
+        setCategories(await toArray(cRes))
+        setBanner(await toObject(bRes))
+        setPromotions(await toArray(promoRes))
+        setFeatured(await toArray(fRes))
+        const pm = await toArray(pmRes)
         setPaymentMethods(pm)
         if (pm.length > 0 && pm[0]?.id) setPaymentMethod(pm[0].id)
       } catch (e) {
@@ -146,14 +161,20 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const saved = localStorage.getItem('sabor_cart')
-    if (saved) { try { setCart(JSON.parse(saved)) } catch {} }
+    try {
+      const saved = localStorage.getItem('sabor_cart')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed)) setCart(parsed)
+      }
+    } catch {}
   }, [])
   useEffect(() => {
-    localStorage.setItem('sabor_cart', JSON.stringify(cart))
+    try { localStorage.setItem('sabor_cart', JSON.stringify(Array.isArray(cart) ? cart : [])) } catch {}
   }, [cart])
 
   const filteredProducts = useMemo(() => {
+    if (!Array.isArray(products)) return []
     return products.filter((p) => {
       const matchCat = activeCategory === 'all' || p.categoryId === activeCategory
       const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase())
@@ -161,8 +182,8 @@ function App() {
     })
   }, [products, activeCategory, search])
 
-  const cartCount = cart.reduce((s, i) => s + i.quantity, 0)
-  const cartTotal = cart.reduce((s, i) => s + (i.finalUnitPrice ?? i.price) * i.quantity, 0)
+  const cartCount = (Array.isArray(cart) ? cart : []).reduce((s, i) => s + (i.quantity || 0), 0)
+  const cartTotal = (Array.isArray(cart) ? cart : []).reduce((s, i) => s + (i.finalUnitPrice ?? i.price ?? 0) * (i.quantity || 0), 0)
 
   const addToCart = (product, quantity = 1, observations = '', addOns = []) => {
     if (!authUser) {
