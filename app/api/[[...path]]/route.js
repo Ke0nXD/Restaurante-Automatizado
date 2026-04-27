@@ -1127,6 +1127,12 @@ async function handlePost(request, pathParts) {
       )
       return NextResponse.json({ ok: true })
     }
+    if (id === 'notifications' && body.action === 'clear-all') {
+      const me = guard.user
+      // Delete all notifications targeted to current user's role
+      const result = await db.collection('notifications').deleteMany({ targetRoles: { $in: [me.role] } })
+      return NextResponse.json({ ok: true, deletedCount: result.deletedCount || 0 })
+    }
     if (id === 'notifications' && body.notificationId && body.action === 'read') {
       const me = guard.user
       await db.collection('notifications').updateOne(

@@ -760,6 +760,18 @@ backend:
       - working: true
         agent: "testing"
         comment: "Testado: fix do bug 'Endereço obrigatório' validado com 100% sucesso (5/5 testes). ✅ Valid delivery orders com address completo aceitos e salvos corretamente (street, city verificados). ✅ Cash delivery com changeFor=50 funciona. ✅ Missing address.street retorna 400 'Endereço obrigatório'. ✅ Empty address.street retorna 400 'Endereço obrigatório'. ✅ Null address retorna 400 'Endereço obrigatório'. Frontend fix (app/page.js linha 232-243) enviando address do estado correto funcionando perfeitamente."
+
+  - task: "POST /api/admin/notifications action=clear-all"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Testado: novo endpoint clear-all validado com 100% sucesso (8/8 testes). ✅ Login admin@sabor.com/admin123 funciona. ✅ Criação de 3 pedidos gera notificações automáticas. ✅ GET /api/admin/notifications retorna lista (50 notifs encontradas). ✅ POST action='clear-all' retorna {ok:true, deletedCount:138} e limpa todas as notificações da role admin. ✅ GET após clear-all retorna array vazio. ✅ Clear-all sem auth retorna 401. ✅ Regressão: action='read-all' continua funcionando e marca notificação como isRead=true. ✅ GET /api/admin/notifications sem auth retorna 401. Funcionalidade completa implementada corretamente."
 frontend:
   - task: "ThemeProvider + CSS vars dinâmicas + light/dark/auto"
     implemented: true
@@ -852,3 +864,5 @@ agent_communication:
     message: "Focused regression test on restaurant API after recent hotfixes COMPLETED with 100% success (14/14 tests passed). All requested scenarios validated: ✅ (1) Cash delivery with change regression - changeNeeded/changeFor/changeAmount calculations work correctly for both true/false scenarios. ✅ (2) Driver delivery flow finalizes order - when driver marks 'Entregue', order.status becomes 'Finalizado' and appears in history=1, not in history=0. ✅ (3) Driver 'Não Entregue' flow works - manual 'Não Entregue' and paymentConfirmed=false forcing 'Não Entregue' both function correctly. ✅ (4) Type filter on history - GET /api/admin/orders?history=1&type=delivery and type=local filters work properly. ✅ (5) Quick regression - all basic endpoints (health, theme, payment-methods, admin login) working. MINOR FIX APPLIED: Fixed backend bug in line 1174 where variable 'id' should be 'targetId' for proper order lookup in delivery status handler. All hotfixes are working as expected."
   - agent: "testing"
     message: "Validação do fix 'Endereço obrigatório' no checkout delivery CONCLUÍDA com 100% de sucesso (5/5 testes passaram). ✅ FUNCIONANDO PERFEITAMENTE: (1) Pedidos delivery válidos com address completo são aceitos (201) e address.street/city salvos corretamente. (2) Cash delivery com changeNeeded=true e changeFor=50 funciona corretamente. (3) Validação de address.street obrigatório: missing field retorna 400 'Endereço obrigatório'. (4) Empty string address.street retorna 400 'Endereço obrigatório'. (5) Null address retorna 400 'Endereço obrigatório'. O fix no frontend (app/page.js linha 232-243) que corrigiu o payload para enviar address do estado correto (ao invés de customer.address) está funcionando perfeitamente. Backend validation (route.js linha 834) if (!address?.street) funcionando como esperado."
+  - agent: "testing"
+    message: "Teste do novo endpoint clear-all notifications CONCLUÍDO com 100% de sucesso (8/8 testes passaram). ✅ FUNCIONANDO PERFEITAMENTE: (1) Login admin@sabor.com/admin123 obtém token corretamente. (2) Criação de 3 pedidos delivery gera notificações automáticas. (3) GET /api/admin/notifications com auth retorna lista de notificações (50 encontradas). (4) POST /api/admin/notifications com action='clear-all' e Bearer token retorna {ok:true, deletedCount:138} e remove todas as notificações da role admin. (5) GET /api/admin/notifications após clear-all retorna array vazio confirmando limpeza. (6) POST clear-all sem token retorna 401 (não autenticado). (7) Regressão: action='read-all' continua funcionando - cria pedido, executa read-all, GET retorna notificação com isRead=true. (8) GET /api/admin/notifications sem auth retorna 401. Novo endpoint clear-all implementado e funcionando perfeitamente conforme especificação."
