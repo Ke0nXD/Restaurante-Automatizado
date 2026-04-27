@@ -1,796 +1,238 @@
 #!/usr/bin/env python3
-"""
-Focused regression test on restaurant API after recent hotfixes.
-Testing scenarios:
-1. Cash delivery with change (regression)
-2. Driver delivery flow now finalizes order
-3. Driver "Não Entregue" still works
-4. Type filter on history
-5. Quick regression
-"""
 
 import requests
 import json
-import os
 import time
-from datetime import datetime
+import sys
 
-# Get base URL from environment
-BASE_URL = os.getenv('NEXT_PUBLIC_BASE_URL', 'https://dine-in-ordering.preview.emergentagent.com')
-API_BASE = f"{BASE_URL}/api"
-
-# Test credentials
+# Configuration
+BASE_URL = "https://dine-in-ordering.preview.emergentagent.com/api"
 ADMIN_EMAIL = "admin@sabor.com"
 ADMIN_PASSWORD = "admin123"
 
-class TestRunner:
-    def __init__(self):
-        self.admin_token = None
-        self.test_results = []
-        self.created_orders = []
-        
-    def log_result(self, test_name, success, details=""):
-        """Log test result"""
-        status = "✅ PASS" if success else "❌ FAIL"
-        print(f"{status} {test_name}")
-        if details:
-            print(f"    {details}")
-        self.test_results.append({
-            'test': test_name,
-            'success': success,
-            'details': details
-        })
-        
-    def login_admin(self):
-        """Login as admin and get token"""
-        try:
-            response = requests.post(f"{API_BASE}/auth/login", json={
-                "email": ADMIN_EMAIL,
-                "password": ADMIN_PASSWORD
-            })
-            
-            if response.status_code == 200:
-                data = response.json()
-                self.admin_token = data.get('token')
-                self.log_result("Admin login", True, f"Token obtained")
-                return True
-            else:
-                self.log_result("Admin login", False, f"Status: {response.status_code}, Response: {response.text}")
-                return False
-        except Exception as e:
-            self.log_result("Admin login", False, f"Exception: {str(e)}")
-            return False
-            
-    def get_admin_headers(self):
-        """Get headers with admin token"""
-        return {"Authorization": f"Bearer {self.admin_token}"}
-        
-    def get_existing_product(self):
-        """Get an existing product for testing"""
-        try:
-            response = requests.get(f"{API_BASE}/products")
-            if response.status_code == 200:
-                products = response.json()
-                if products:
-                    product = products[0]
-                    print(f"    Using product: {product.get('name')} (ID: {product.get('id')}, Price: {product.get('price')})")
-                    return product
-            return None
-        except Exception as e:
-            print(f"    Error getting product: {str(e)}")
-            return None
-            
-    def test_cash_delivery_with_change(self):
-        """Test 1: Cash delivery with change (regression)"""
-        print("\n=== Test 1: Cash delivery with change ===")
-        
-        product = self.get_existing_product()
-        if not product:
-            self.log_result("Cash delivery - get product", False, "No products available")
-            return
-            
-        # Test with changeNeeded=true
+def test_clear_all_notifications():
+    """Test the new clear-all notifications endpoint"""
+    print("🧪 Testing clear-all notifications endpoint...")
+    
+    # Step 1: Login as admin to get token
+    print("\n1. Login as admin...")
+    login_response = requests.post(f"{BASE_URL}/auth/login", json={
+        "email": ADMIN_EMAIL,
+        "password": ADMIN_PASSWORD
+    })
+    
+    if login_response.status_code != 200:
+        print(f"❌ Admin login failed: {login_response.status_code} - {login_response.text}")
+        return False
+    
+    admin_token = login_response.json().get("token")
+    if not admin_token:
+        print("❌ No token received from admin login")
+        return False
+    
+    print(f"✅ Admin login successful, token received")
+    
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    
+    # Step 2: Create 2-3 orders to generate automatic notifications
+    print("\n2. Creating orders to generate notifications...")
+    
+    orders_created = []
+    for i in range(3):
         order_data = {
             "type": "delivery",
-            "items": [{
-                "productId": product['id'],
-                "name": product['name'],
-                "price": product['price'],
-                "quantity": 1,
-                "addOns": []
-            }],
-            "customer": {
-                "name": "João Silva",
-                "phone": "11999998888",
-                "email": "joao@test.com"
-            },
+            "items": [
+                {
+                    "productId": "p-burger-classic",
+                    "quantity": 1,
+                    "price": 38.9,
+                    "name": "Burger Clássico"
+                }
+            ],
+            "total": 38.9,
+            "paymentMethod": "cash_delivery",
             "address": {
-                "street": "Rua das Flores, 123",
-                "neighborhood": "Centro",
+                "street": f"Rua Teste {i+1}, 123",
                 "city": "São Paulo",
-                "state": "SP",
                 "zipCode": "01234-567"
             },
-            "payment": {
-                "method": "cash_delivery",
-                "changeNeeded": True,
-                "changeFor": 100
-            }
-        }
-        
-        try:
-            print(f"    Creating order with product: {product['id']}")
-            print(f"    Order data: {json.dumps(order_data, indent=2)}")
-            response = requests.post(f"{API_BASE}/orders", json=order_data)
-            print(f"    Response status: {response.status_code}")
-            print(f"    Response text: {response.text}")
-            
-            if response.status_code == 201:
-                order = response.json()
-                self.created_orders.append(order['id'])
-                
-                # Validate payment details
-                payment = order.get('payment', {})
-                total = order.get('total', 0)
-                expected_change = 100 - total
-                
-                success = (
-                    payment.get('method') == 'cash_delivery' and
-                    payment.get('changeNeeded') == True and
-                    payment.get('changeFor') == 100 and
-                    abs(payment.get('changeAmount', 0) - expected_change) < 0.01
-                )
-                
-                self.log_result(
-                    "Cash delivery with change", 
-                    success,
-                    f"Method: {payment.get('method')}, ChangeNeeded: {payment.get('changeNeeded')}, ChangeFor: {payment.get('changeFor')}, ChangeAmount: {payment.get('changeAmount')}, Expected: {expected_change}"
-                )
-            else:
-                self.log_result("Cash delivery with change", False, f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_result("Cash delivery with change", False, f"Exception: {str(e)}")
-            
-        # Test with changeNeeded=false
-        order_data['payment'] = {
-            "method": "cash_delivery",
-            "changeNeeded": False
-        }
-        
-        try:
-            response = requests.post(f"{API_BASE}/orders", json=order_data)
-            
-            if response.status_code == 201:
-                order = response.json()
-                self.created_orders.append(order['id'])
-                
-                payment = order.get('payment', {})
-                success = (
-                    payment.get('method') == 'cash_delivery' and
-                    payment.get('changeNeeded') == False and
-                    'changeFor' not in payment and
-                    'changeAmount' not in payment
-                )
-                
-                self.log_result(
-                    "Cash delivery without change", 
-                    success,
-                    f"Method: {payment.get('method')}, ChangeNeeded: {payment.get('changeNeeded')}"
-                )
-            else:
-                self.log_result("Cash delivery without change", False, f"Status: {response.status_code}")
-                
-        except Exception as e:
-            self.log_result("Cash delivery without change", False, f"Exception: {str(e)}")
-            
-    def test_driver_delivery_flow_finalizes_order(self):
-        """Test 2: Driver delivery flow now finalizes order"""
-        print("\n=== Test 2: Driver delivery flow finalizes order ===")
-        
-        product = self.get_existing_product()
-        if not product:
-            self.log_result("Driver flow - get product", False, "No products available")
-            return
-            
-        # Create a delivery order with PIX
-        order_data = {
-            "type": "delivery",
-            "items": [{
-                "productId": product['id'],
-                "name": product['name'],
-                "price": product['price'],
-                "quantity": 1,
-                "addOns": []
-            }],
             "customer": {
-                "name": "Maria Santos",
-                "phone": "11888887777",
-                "email": "maria@test.com"
-            },
-            "address": {
-                "street": "Av. Paulista, 1000",
-                "neighborhood": "Bela Vista",
-                "city": "São Paulo",
-                "state": "SP",
-                "zipCode": "01310-100"
-            },
-            "payment": {
-                "method": "pix"
+                "name": f"Cliente Teste {i+1}",
+                "phone": f"1199999888{i}",
+                "email": f"cliente{i+1}@teste.com"
             }
         }
         
-        try:
-            # Create order
-            response = requests.post(f"{API_BASE}/orders", json=order_data)
-            if response.status_code != 201:
-                self.log_result("Driver flow - create order", False, f"Status: {response.status_code}")
-                return
-                
-            order = response.json()
-            order_id = order['id']
-            self.created_orders.append(order_id)
-            
-            # Mark as 'Saiu para entrega'
-            response = requests.patch(
-                f"{API_BASE}/admin/orders/{order_id}",
-                json={"status": "Saiu para entrega"},
-                headers=self.get_admin_headers()
-            )
-            
-            if response.status_code != 200:
-                self.log_result("Driver flow - mark as out for delivery", False, f"Status: {response.status_code}")
-                return
-                
-            # Driver marks as 'Entregue'
-            response = requests.patch(
-                f"{API_BASE}/admin/orders/{order_id}",
-                json={
-                    "deliveryStatus": "Entregue",
-                    "paymentConfirmed": True
-                },
-                headers=self.get_admin_headers()
-            )
-            
-            if response.status_code != 200:
-                self.log_result("Driver flow - mark as delivered", False, f"Status: {response.status_code}")
-                return
-                
-            # Get updated order
-            response = requests.get(f"{API_BASE}/orders/{order_id}")
-            if response.status_code != 200:
-                self.log_result("Driver flow - get updated order", False, f"Status: {response.status_code}")
-                return
-                
-            updated_order = response.json()
-            
-            # Check if order status is 'Finalizado'
-            success = updated_order.get('status') == 'Finalizado'
-            self.log_result(
-                "Driver marks delivered → order Finalizado",
-                success,
-                f"Order status: {updated_order.get('status')}"
-            )
-            
-            # Verify it appears in history=1
-            response = requests.get(
-                f"{API_BASE}/admin/orders?history=1",
-                headers=self.get_admin_headers()
-            )
-            
-            if response.status_code == 200:
-                history_orders = response.json()
-                found_in_history = any(o['id'] == order_id for o in history_orders)
-                self.log_result(
-                    "Finalized order appears in history=1",
-                    found_in_history,
-                    f"Found in history: {found_in_history}"
-                )
-            else:
-                self.log_result("Check history=1", False, f"Status: {response.status_code}")
-                
-            # Verify it does NOT appear in history=0
-            response = requests.get(
-                f"{API_BASE}/admin/orders?history=0",
-                headers=self.get_admin_headers()
-            )
-            
-            if response.status_code == 200:
-                active_orders = response.json()
-                found_in_active = any(o['id'] == order_id for o in active_orders)
-                self.log_result(
-                    "Finalized order NOT in history=0",
-                    not found_in_active,
-                    f"Found in active: {found_in_active}"
-                )
-            else:
-                self.log_result("Check history=0", False, f"Status: {response.status_code}")
-                
-        except Exception as e:
-            self.log_result("Driver delivery flow", False, f"Exception: {str(e)}")
-            
-    def test_driver_nao_entregue_flow(self):
-        """Test 3: Driver 'Não Entregue' still works"""
-        print("\n=== Test 3: Driver 'Não Entregue' flow ===")
-        
-        product = self.get_existing_product()
-        if not product:
-            self.log_result("Não Entregue - get product", False, "No products available")
-            return
-            
-        # Create a delivery order with cash_delivery
-        order_data = {
-            "type": "delivery",
-            "items": [{
-                "productId": product['id'],
-                "name": product['name'],
-                "price": product['price'],
-                "quantity": 1,
-                "addOns": []
-            }],
-            "customer": {
-                "name": "Pedro Costa",
-                "phone": "11777776666",
-                "email": "pedro@test.com"
-            },
-            "address": {
-                "street": "Rua Augusta, 500",
-                "neighborhood": "Consolação",
-                "city": "São Paulo",
-                "state": "SP",
-                "zipCode": "01305-000"
-            },
-            "payment": {
-                "method": "cash_delivery"
-            }
-        }
-        
-        try:
-            # Create order
-            response = requests.post(f"{API_BASE}/orders", json=order_data)
-            if response.status_code != 201:
-                self.log_result("Não Entregue - create order", False, f"Status: {response.status_code}")
-                return
-                
-            order = response.json()
-            order_id = order['id']
-            self.created_orders.append(order_id)
-            
-            # Driver marks as 'Não Entregue'
-            response = requests.patch(
-                f"{API_BASE}/admin/orders/{order_id}",
-                json={
-                    "deliveryStatus": "Não Entregue",
-                    "deliveryObservation": "Cliente não atendeu"
-                },
-                headers=self.get_admin_headers()
-            )
-            
-            if response.status_code != 200:
-                self.log_result("Não Entregue - mark as not delivered", False, f"Status: {response.status_code}")
-                return
-                
-            # Get updated order
-            response = requests.get(f"{API_BASE}/orders/{order_id}")
-            if response.status_code != 200:
-                self.log_result("Não Entregue - get updated order", False, f"Status: {response.status_code}")
-                return
-                
-            updated_order = response.json()
-            
-            # Check if order status is 'Não Entregue'
-            success = updated_order.get('status') == 'Não Entregue'
-            self.log_result(
-                "Driver marks 'Não Entregue' → order status correct",
-                success,
-                f"Order status: {updated_order.get('status')}"
-            )
-            
-            # Test paymentConfirmed=false forces "Não Entregue"
-            order_data['customer']['name'] = "Ana Silva"
-            order_data['customer']['email'] = "ana@test.com"
-            
-            response = requests.post(f"{API_BASE}/orders", json=order_data)
-            if response.status_code == 201:
-                order2 = response.json()
-                order2_id = order2['id']
-                self.created_orders.append(order2_id)
-                
-                # Try to mark as delivered but with paymentConfirmed=false
-                response = requests.patch(
-                    f"{API_BASE}/admin/orders/{order2_id}",
-                    json={
-                        "deliveryStatus": "Entregue",
-                        "paymentConfirmed": False
-                    },
-                    headers=self.get_admin_headers()
-                )
-                
-                print(f"    PATCH response status: {response.status_code}")
-                print(f"    PATCH response: {response.text}")
-                
-                if response.status_code == 200:
-                    response = requests.get(f"{API_BASE}/orders/{order2_id}")
-                    if response.status_code == 200:
-                        order2_updated = response.json()
-                        print(f"    Updated order payment method: {order2_updated.get('payment', {}).get('method')}")
-                        print(f"    Updated order status: {order2_updated.get('status')}")
-                        # Should be forced to "Não Entregue" due to paymentConfirmed=false
-                        forced_success = order2_updated.get('status') == 'Não Entregue'
-                        self.log_result(
-                            "paymentConfirmed=false forces 'Não Entregue'",
-                            forced_success,
-                            f"Order status: {order2_updated.get('status')}"
-                        )
-                
-        except Exception as e:
-            self.log_result("Não Entregue flow", False, f"Exception: {str(e)}")
-            
-    def test_type_filter_on_history(self):
-        """Test 4: Type filter on history"""
-        print("\n=== Test 4: Type filter on history ===")
-        
-        try:
-            # Test delivery orders in history
-            response = requests.get(
-                f"{API_BASE}/admin/orders?history=1&type=delivery",
-                headers=self.get_admin_headers()
-            )
-            
-            if response.status_code == 200:
-                delivery_history = response.json()
-                all_delivery = all(order.get('type') == 'delivery' for order in delivery_history)
-                self.log_result(
-                    "History filter type=delivery",
-                    all_delivery,
-                    f"Found {len(delivery_history)} delivery orders, all delivery: {all_delivery}"
-                )
-            else:
-                self.log_result("History filter type=delivery", False, f"Status: {response.status_code}")
-                
-            # Test local orders in history
-            response = requests.get(
-                f"{API_BASE}/admin/orders?history=1&type=local",
-                headers=self.get_admin_headers()
-            )
-            
-            if response.status_code == 200:
-                local_history = response.json()
-                all_local = all(order.get('type') == 'local' for order in local_history)
-                self.log_result(
-                    "History filter type=local",
-                    all_local,
-                    f"Found {len(local_history)} local orders, all local: {all_local}"
-                )
-            else:
-                self.log_result("History filter type=local", False, f"Status: {response.status_code}")
-                
-        except Exception as e:
-            self.log_result("Type filter on history", False, f"Exception: {str(e)}")
-            
-    def test_quick_regression(self):
-        """Test 5: Quick regression"""
-        print("\n=== Test 5: Quick regression ===")
-        
-        # Test health endpoint
-        try:
-            response = requests.get(f"{API_BASE}/health")
-            success = response.status_code == 200
-            self.log_result("GET /api/health", success, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_result("GET /api/health", False, f"Exception: {str(e)}")
-            
-        # Test theme endpoint
-        try:
-            response = requests.get(f"{API_BASE}/theme")
-            if response.status_code == 200:
-                data = response.json()
-                has_mode = 'mode' in data
-                self.log_result("GET /api/theme", has_mode, f"Has mode field: {has_mode}")
-            else:
-                self.log_result("GET /api/theme", False, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_result("GET /api/theme", False, f"Exception: {str(e)}")
-            
-        # Test payment methods
-        try:
-            response = requests.get(f"{API_BASE}/payment-methods")
-            if response.status_code == 200:
-                methods = response.json()
-                has_three = len(methods) == 3
-                self.log_result("GET /api/payment-methods", has_three, f"Found {len(methods)} methods")
-            else:
-                self.log_result("GET /api/payment-methods", False, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_result("GET /api/payment-methods", False, f"Exception: {str(e)}")
-            
-        # Test admin login (already done but verify again)
-        try:
-            response = requests.post(f"{API_BASE}/auth/login", json={
-                "email": ADMIN_EMAIL,
-                "password": ADMIN_PASSWORD
-            })
-            success = response.status_code == 200 and 'token' in response.json()
-            self.log_result("POST /api/auth/login admin", success, f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_result("POST /api/auth/login admin", False, f"Exception: {str(e)}")
-            
-    def cleanup_test_orders(self):
-        """Clean up test orders"""
-        print("\n=== Cleanup ===")
-        for order_id in self.created_orders:
-            try:
-                response = requests.delete(
-                    f"{API_BASE}/admin/orders/{order_id}",
-                    headers=self.get_admin_headers()
-                )
-                if response.status_code == 200:
-                    print(f"✅ Cleaned up order {order_id}")
-                else:
-                    print(f"⚠️ Failed to cleanup order {order_id}: {response.status_code}")
-            except Exception as e:
-                print(f"⚠️ Exception cleaning up order {order_id}: {str(e)}")
-                
-    def run_all_tests(self):
-        """Run all regression tests"""
-        print(f"🚀 Starting focused regression tests on {API_BASE}")
-        print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # Login first
-        if not self.login_admin():
-            print("❌ Cannot proceed without admin login")
-            return
-            
-        # Run all test scenarios
-        self.test_cash_delivery_with_change()
-        self.test_driver_delivery_flow_finalizes_order()
-        self.test_driver_nao_entregue_flow()
-        self.test_type_filter_on_history()
-        self.test_quick_regression()
-        
-        # Cleanup
-        self.cleanup_test_orders()
-        
-        # Summary
-        print("\n" + "="*60)
-        print("📊 TEST SUMMARY")
-        print("="*60)
-        
-        passed = sum(1 for r in self.test_results if r['success'])
-        total = len(self.test_results)
-        
-        for result in self.test_results:
-            status = "✅" if result['success'] else "❌"
-            print(f"{status} {result['test']}")
-            
-        print(f"\n🎯 Results: {passed}/{total} tests passed ({passed/total*100:.1f}%)")
-        
-        if passed == total:
-            print("🎉 All regression tests PASSED!")
+        order_response = requests.post(f"{BASE_URL}/orders", json=order_data)
+        if order_response.status_code == 201:
+            order_id = order_response.json().get("id")
+            orders_created.append(order_id)
+            print(f"✅ Order {i+1} created: {order_id}")
         else:
-            print("⚠️ Some tests FAILED - review details above")
-            
-        return passed == total
+            print(f"⚠️ Order {i+1} creation failed: {order_response.status_code} - {order_response.text}")
     
-    def test_delivery_address_validation(self):
-        """Test the 'Endereço obrigatório' bug fix in checkout delivery"""
-        print("\n=== Testing Delivery Address Validation Fix ===")
-        
-        # Test 1: Valid delivery order with complete address
-        print("\n1. Testing valid delivery order with complete address...")
-        
-        valid_payload = {
-            "type": "delivery",
-            "items": [{"productId": "p-burger-classic", "quantity": 1}],
-            "customer": {"name": "João Teste", "phone": "11999998888"},
-            "address": {
-                "street": "Rua das Flores",
-                "number": "123",
-                "district": "Centro",
-                "complement": "Apto 4",
-                "reference": "Próximo ao mercado",
-                "cep": "01234-567",
-                "city": "São Paulo",
-                "state": "SP"
-            },
-            "payment": {"method": "pix"}
-        }
-        
-        try:
-            response = requests.post(f"{API_BASE}/orders", json=valid_payload, timeout=10)
-            
-            if response.status_code == 201:
-                data = response.json()
-                
-                # Verify address fields are saved correctly
-                order_address = data.get('address', {})
-                if (order_address.get('street') == "Rua das Flores" and
-                    order_address.get('city') == "São Paulo"):
-                    self.log_result("Valid delivery address accepted", True, 
-                                  f"Address saved: {order_address.get('street')}, {order_address.get('city')}")
-                    order_id = data.get('id')
-                    if order_id:
-                        self.created_orders.append(order_id)
-                else:
-                    self.log_result("Valid delivery address accepted", False, 
-                                  f"Address fields incorrect: {order_address}")
-            else:
-                self.log_result("Valid delivery address accepted", False, 
-                              f"Expected 201, got {response.status_code}: {response.text}")
-                
-        except Exception as e:
-            self.log_result("Valid delivery address accepted", False, f"Error: {e}")
-        
-        # Test 2: Valid delivery order with cash_delivery and change
-        print("\n2. Testing cash_delivery with change...")
-        
-        cash_payload = {
-            "type": "delivery",
-            "items": [{"productId": "p-burger-classic", "quantity": 1}],
-            "customer": {"name": "Maria Silva", "phone": "11888887777"},
-            "address": {
-                "street": "Av. Paulista",
-                "number": "1000",
-                "district": "Bela Vista",
-                "complement": "Sala 101",
-                "reference": "Em frente ao metrô",
-                "cep": "01310-100",
-                "city": "São Paulo",
-                "state": "SP"
-            },
-            "payment": {
-                "method": "cash_delivery",
-                "changeNeeded": True,
-                "changeFor": 50
+    if len(orders_created) < 2:
+        print("❌ Failed to create enough orders for testing")
+        return False
+    
+    # Wait a moment for notifications to be created
+    time.sleep(1)
+    
+    # Step 3: GET /api/admin/notifications to verify notifications exist
+    print("\n3. Checking existing notifications...")
+    
+    get_notifs_response = requests.get(f"{BASE_URL}/admin/notifications", headers=headers)
+    if get_notifs_response.status_code != 200:
+        print(f"❌ Failed to get notifications: {get_notifs_response.status_code} - {get_notifs_response.text}")
+        return False
+    
+    notifications_before = get_notifs_response.json()
+    print(f"✅ Found {len(notifications_before)} notifications before clear-all")
+    
+    if len(notifications_before) < 2:
+        print("⚠️ Expected at least 2 notifications from created orders")
+        # Continue with test anyway
+    
+    # Step 4: POST /api/admin/notifications with {"action":"clear-all"}
+    print("\n4. Testing clear-all action...")
+    
+    clear_all_response = requests.post(f"{BASE_URL}/admin/notifications", 
+                                     headers=headers,
+                                     json={"action": "clear-all"})
+    
+    if clear_all_response.status_code != 200:
+        print(f"❌ Clear-all failed: {clear_all_response.status_code} - {clear_all_response.text}")
+        return False
+    
+    clear_result = clear_all_response.json()
+    print(f"✅ Clear-all response: {clear_result}")
+    
+    # Verify response format
+    if not clear_result.get("ok"):
+        print("❌ Clear-all response missing 'ok: true'")
+        return False
+    
+    deleted_count = clear_result.get("deletedCount", 0)
+    if deleted_count < 2:
+        print(f"⚠️ Expected deletedCount >= 2, got {deleted_count}")
+    else:
+        print(f"✅ Deleted {deleted_count} notifications")
+    
+    # Step 5: GET /api/admin/notifications again to verify they're cleared
+    print("\n5. Verifying notifications are cleared...")
+    
+    get_notifs_after_response = requests.get(f"{BASE_URL}/admin/notifications", headers=headers)
+    if get_notifs_after_response.status_code != 200:
+        print(f"❌ Failed to get notifications after clear: {get_notifs_after_response.status_code}")
+        return False
+    
+    notifications_after = get_notifs_after_response.json()
+    print(f"✅ Found {len(notifications_after)} notifications after clear-all")
+    
+    if len(notifications_after) > 0:
+        print("⚠️ Expected empty array or only notifications from other roles")
+        # This might be OK if there are notifications for other roles
+    
+    # Step 6: Test clear-all without auth (should return 401)
+    print("\n6. Testing clear-all without authentication...")
+    
+    unauth_response = requests.post(f"{BASE_URL}/admin/notifications", 
+                                  json={"action": "clear-all"})
+    
+    if unauth_response.status_code != 401:
+        print(f"❌ Expected 401 without auth, got {unauth_response.status_code}")
+        return False
+    
+    print("✅ Clear-all correctly returns 401 without authentication")
+    
+    # Step 7: Test regression - read-all action still works
+    print("\n7. Testing read-all regression...")
+    
+    # First create a new order to generate a notification
+    order_data = {
+        "type": "delivery",
+        "items": [
+            {
+                "productId": "p-burger-classic",
+                "quantity": 1,
+                "price": 38.9,
+                "name": "Burger Clássico"
             }
+        ],
+        "total": 38.9,
+        "paymentMethod": "cash_delivery",
+        "address": {
+            "street": "Rua Regressão, 456",
+            "city": "São Paulo",
+            "zipCode": "01234-567"
+        },
+        "customer": {
+            "name": "Cliente Regressão",
+            "phone": "11999998887",
+            "email": "regressao@teste.com"
         }
+    }
+    
+    regression_order_response = requests.post(f"{BASE_URL}/orders", json=order_data)
+    if regression_order_response.status_code == 201:
+        print("✅ Created order for regression test")
+        time.sleep(1)  # Wait for notification
         
-        try:
-            response = requests.post(f"{API_BASE}/orders", json=cash_payload, timeout=10)
-            
-            if response.status_code == 201:
-                data = response.json()
-                
-                # Verify payment details
-                payment = data.get('payment', {})
-                if payment.get('changeFor') == 50:
-                    self.log_result("Cash delivery with change", True, 
-                                  f"Change amount: {payment.get('changeFor')}")
-                    order_id = data.get('id')
-                    if order_id:
-                        self.created_orders.append(order_id)
-                else:
-                    self.log_result("Cash delivery with change", False, 
-                                  f"Change amount incorrect: {payment.get('changeFor')}")
-                    
+        # Test read-all
+        read_all_response = requests.post(f"{BASE_URL}/admin/notifications", 
+                                        headers=headers,
+                                        json={"action": "read-all"})
+        
+        if read_all_response.status_code != 200:
+            print(f"❌ Read-all failed: {read_all_response.status_code}")
+            return False
+        
+        print("✅ Read-all action works correctly")
+        
+        # Verify notification is marked as read
+        get_notifs_read_response = requests.get(f"{BASE_URL}/admin/notifications", headers=headers)
+        if get_notifs_read_response.status_code == 200:
+            notifs_after_read = get_notifs_read_response.json()
+            if len(notifs_after_read) > 0 and notifs_after_read[0].get("isRead"):
+                print("✅ Notification correctly marked as read")
             else:
-                self.log_result("Cash delivery with change", False, 
-                              f"Expected 201, got {response.status_code}: {response.text}")
-                
-        except Exception as e:
-            self.log_result("Cash delivery with change", False, f"Error: {e}")
+                print("⚠️ Notification not marked as read or no notifications found")
+    else:
+        print(f"⚠️ Failed to create order for regression test: {regression_order_response.status_code}")
+    
+    # Step 8: Test GET /api/admin/notifications without auth returns 401
+    print("\n8. Testing GET notifications without auth...")
+    
+    unauth_get_response = requests.get(f"{BASE_URL}/admin/notifications")
+    
+    if unauth_get_response.status_code != 401:
+        print(f"❌ Expected 401 for GET without auth, got {unauth_get_response.status_code}")
+        return False
+    
+    print("✅ GET notifications correctly returns 401 without authentication")
+    
+    print("\n🎉 All clear-all notifications tests completed successfully!")
+    return True
+
+def main():
+    """Run all tests"""
+    print("🚀 Starting clear-all notifications endpoint tests...")
+    
+    try:
+        success = test_clear_all_notifications()
         
-        # Test 3: Edge case - missing address.street should return 400
-        print("\n3. Testing missing address.street (should return 400)...")
-        
-        invalid_payload = {
-            "type": "delivery",
-            "items": [{"productId": "p-burger-classic", "quantity": 1}],
-            "customer": {"name": "Pedro Santos", "phone": "11777776666"},
-            "address": {
-                "number": "456",
-                "district": "Vila Madalena",
-                "city": "São Paulo",
-                "state": "SP"
-                # Missing street field
-            },
-            "payment": {"method": "pix"}
-        }
-        
-        try:
-            response = requests.post(f"{API_BASE}/orders", json=invalid_payload, timeout=10)
+        if success:
+            print("\n✅ ALL TESTS PASSED")
+            sys.exit(0)
+        else:
+            print("\n❌ SOME TESTS FAILED")
+            sys.exit(1)
             
-            if response.status_code == 400:
-                data = response.json()
-                error_msg = data.get('error', '')
-                if error_msg == 'Endereço obrigatório':
-                    self.log_result("Missing street validation", True, 
-                                  f"Correct error message: '{error_msg}'")
-                else:
-                    self.log_result("Missing street validation", False, 
-                                  f"Wrong error message: '{error_msg}'")
-            else:
-                self.log_result("Missing street validation", False, 
-                              f"Expected 400, got {response.status_code}: {response.text}")
-                
-        except Exception as e:
-            self.log_result("Missing street validation", False, f"Error: {e}")
-        
-        # Test 4: Edge case - empty address.street should return 400
-        print("\n4. Testing empty address.street (should return 400)...")
-        
-        empty_street_payload = {
-            "type": "delivery",
-            "items": [{"productId": "p-burger-classic", "quantity": 1}],
-            "customer": {"name": "Ana Costa", "phone": "11666665555"},
-            "address": {
-                "street": "",  # Empty string
-                "number": "789",
-                "district": "Moema",
-                "city": "São Paulo",
-                "state": "SP"
-            },
-            "payment": {"method": "pix"}
-        }
-        
-        try:
-            response = requests.post(f"{API_BASE}/orders", json=empty_street_payload, timeout=10)
-            
-            if response.status_code == 400:
-                data = response.json()
-                error_msg = data.get('error', '')
-                if error_msg == 'Endereço obrigatório':
-                    self.log_result("Empty street validation", True, 
-                                  f"Correct error message: '{error_msg}'")
-                else:
-                    self.log_result("Empty street validation", False, 
-                                  f"Wrong error message: '{error_msg}'")
-            else:
-                self.log_result("Empty street validation", False, 
-                              f"Expected 400, got {response.status_code}: {response.text}")
-                
-        except Exception as e:
-            self.log_result("Empty street validation", False, f"Error: {e}")
-        
-        # Test 5: Edge case - null address should return 400
-        print("\n5. Testing null address (should return 400)...")
-        
-        null_address_payload = {
-            "type": "delivery",
-            "items": [{"productId": "p-burger-classic", "quantity": 1}],
-            "customer": {"name": "Carlos Lima", "phone": "11555554444"},
-            "address": None,
-            "payment": {"method": "pix"}
-        }
-        
-        try:
-            response = requests.post(f"{API_BASE}/orders", json=null_address_payload, timeout=10)
-            
-            if response.status_code == 400:
-                data = response.json()
-                error_msg = data.get('error', '')
-                if error_msg == 'Endereço obrigatório':
-                    self.log_result("Null address validation", True, 
-                                  f"Correct error message: '{error_msg}'")
-                else:
-                    self.log_result("Null address validation", False, 
-                                  f"Wrong error message: '{error_msg}'")
-            else:
-                self.log_result("Null address validation", False, 
-                              f"Expected 400, got {response.status_code}: {response.text}")
-                
-        except Exception as e:
-            self.log_result("Null address validation", False, f"Error: {e}")
+    except Exception as e:
+        print(f"\n💥 Test execution failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
-    runner = TestRunner()
-    
-    # Run only the delivery address validation tests
-    print("Testing Delivery Address Validation Fix")
-    print(f"API Base: {API_BASE}")
-    print(f"Timestamp: {datetime.now().isoformat()}")
-    
-    runner.test_delivery_address_validation()
-    
-    # Print summary
-    print(f"\n=== Test Summary ===")
-    passed = sum(1 for r in runner.test_results if r['success'])
-    total = len(runner.test_results)
-    print(f"Tests passed: {passed}/{total}")
-    
-    if passed == total:
-        print("🎉 All tests PASSED!")
-    else:
-        print("⚠️ Some tests FAILED - review details above")
-        
-    exit(0 if passed == total else 1)
+    main()

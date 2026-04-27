@@ -579,7 +579,47 @@ function AdminPage() {
                 </Button>
               </SheetTrigger>
               <SheetContent side="right" className="w-full border-white/10 bg-zinc-950 sm:max-w-md overflow-y-auto">
-                <div className="mb-4 flex items-center gap-2"><Bell className="h-5 w-5 text-amber-400" /><h2 className="text-lg font-bold">Notificações</h2></div>
+                <div className="mb-4 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Bell className="h-5 w-5 text-amber-400" />
+                    <h2 className="text-lg font-bold">Notificações</h2>
+                  </div>
+                  {notifications.length > 0 && (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-8 border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20">
+                          <Trash2 className="mr-1 h-3.5 w-3.5" /> Limpar tudo
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent className="border-white/10 bg-zinc-900">
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Limpar todas as notificações?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Esta ação irá excluir <strong>permanentemente</strong> todas as {notifications.length} {notifications.length === 1 ? 'notificação' : 'notificações'} desta área. Esta ação não pode ser desfeita.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel className="border-white/10">Cancelar</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-red-500 text-white hover:bg-red-600"
+                            onClick={async () => {
+                              try {
+                                const res = await apiFetch('/api/admin/notifications', { method: 'POST', body: JSON.stringify({ action: 'clear-all' }) })
+                                setNotifications([])
+                                beepedIdsRef.current = new Set()
+                                toast.success(`${res?.deletedCount || 0} ${(res?.deletedCount || 0) === 1 ? 'notificação removida' : 'notificações removidas'}`)
+                              } catch (e) {
+                                toast.error('Erro ao limpar: ' + (e.message || ''))
+                              }
+                            }}
+                          >
+                            Sim, limpar tudo
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  )}
+                </div>
                 {notifications.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Nenhuma notificação.</p>
                 ) : (
